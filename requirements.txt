@@ -1,0 +1,12 @@
+# 라스트미닛 통합 콘솔 실행에 필요한 패키지
+#
+# Chrome 은 각자 PC 에 설치된 것을 그대로 쓴다 (CDP 로 붙는다).
+# 그래서 playwright 브라우저 다운로드(playwright install)는 필요 없다.
+playwright>=1.40
+pandas>=2.0
+openpyxl>=3.1
+xlrd>=2.0
+streamlit>=1.40
+
+# Firebase Realtime Database (중계 지점) 인증용
+google-auth>=2.0

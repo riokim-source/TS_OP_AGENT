@@ -1,0 +1,15 @@
+# 이 저장소에는 비밀이 들어가지 않는다
+hub/data/firebase_service_account.json
+hub/data/agent_config.json
+hub/data/agent.lock
+hub/data/jobs/
+hub/data/shared/
+hub/logs/
+*.xlsx
+*.xls
+*.csv
+__pycache__/
+*.pyc
+.venv/
+*.bak_*
+*.exe

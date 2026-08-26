@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "KR": {
+      "name": "Korea OTA Account",
+      "port": 9522,
+      "profile_dir": "%LOCALAPPDATA%\\OTABot\\chrome_korea"
+    },
+    "JP": {
+      "name": "Japan OTA Account",
+      "port": 9523,
+      "profile_dir": "%LOCALAPPDATA%\\OTABot\\chrome_japan"
+    },
+    "AU": {
+      "name": "Australia OTA Account",
+      "port": 9524,
+      "profile_dir": "%LOCALAPPDATA%\\OTABot\\chrome_australia"
+    },
+    "UK": {
+      "name": "UK OTA Account",
+      "port": 9525,
+      "profile_dir": "%LOCALAPPDATA%\\OTABot\\chrome_uk"
+    },
+    "GLOBAL": {
+      "name": "Global (VI/MRT)",
+      "port": 9530,
+      "profile_dir": "%LOCALAPPDATA%\\OTABot\\chrome_global"
+    }
+  },
+  "routes": {
+    "KOREA": {
+      "KLOOK": "KR",
+      "KK": "KR",
+      "GG": "KR",
+      "VI": "GLOBAL",
+      "CP": null,
+      "MRT": "GLOBAL"
+    },
+    "JAPAN": {
+      "KLOOK": "JP",
+      "KK": null,
+      "GG": "JP",
+      "VI": "GLOBAL",
+      "CP": null,
+      "MRT": "GLOBAL"
+    },
+    "AUSTRALIA": {
+      "KLOOK": "AU",
+      "KK": null,
+      "GG": "AU",
+      "VI": "GLOBAL",
+      "CP": null,
+      "MRT": "GLOBAL"
+    },
+    "UK": {
+      "KLOOK": null,
+      "KK": null,
+      "GG": null,
+      "VI": null,
+      "CP": null,
+      "MRT": null
+    },
+    "OTHER": {
+      "KLOOK": null,
+      "KK": null,
+      "GG": null,
+      "VI": null,
+      "CP": null,
+      "MRT": null
+    }
+  },
+  "area_routes": {}
+}

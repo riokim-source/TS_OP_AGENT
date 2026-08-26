@@ -1,0 +1,461 @@
+{
+  "schema_version": 1,
+  "MRT": {
+    "Amanohashidate": {
+      "ids": [
+        "4396387"
+      ],
+      "area": "Osaka"
+    },
+    "Arashiyama & Nishiki": {
+      "ids": [
+        "4397040"
+      ],
+      "area": "Osaka"
+    },
+    "Autumn Asahidake": {
+      "ids": [
+        "6223114"
+      ],
+      "area": "Sapporo"
+    },
+    "Autumn Hitachi": {
+      "ids": [
+        "4779346"
+      ],
+      "area": "Tokyo"
+    },
+    "Autumn Kumamoto": {
+      "ids": [
+        "6225054"
+      ],
+      "area": "Fukuoka"
+    },
+    "Autumn Nara": {
+      "ids": [
+        "4777973"
+      ],
+      "area": "Osaka"
+    },
+    "Autumn Nikkio": {
+      "ids": [
+        "4779162"
+      ],
+      "area": "Tokyo"
+    },
+    "Autumn Usa": {
+      "ids": [
+        "4777686"
+      ],
+      "area": "Fukuoka"
+    },
+    "Biei Furano": {
+      "ids": [
+        "5624093"
+      ],
+      "area": "Sapporo"
+    },
+    "Biei Highlight": {
+      "ids": [
+        "5624093"
+      ],
+      "area": "Sapporo"
+    },
+    "Biei Signature": {
+      "ids": [
+        "5624093"
+      ],
+      "area": "Sapporo"
+    },
+    "Biwako Valley": {
+      "ids": [
+        "4907593"
+      ],
+      "area": "Osaka"
+    },
+    "Blue Mountain Bushwalk": {
+      "ids": [
+        "5616354"
+      ],
+      "area": "Sydney"
+    },
+    "Blue Mountain Zig Zag": {
+      "ids": [
+        "5616354"
+      ],
+      "area": "Sydney"
+    },
+    "Fuji Highlight": {
+      "ids": [
+        "3887808"
+      ],
+      "area": "Tokyo"
+    },
+    "Fuji Illumination": {
+      "ids": [
+        "5062108"
+      ],
+      "area": "Tokyo"
+    },
+    "Fuji Shibazakura": {
+      "ids": [
+        "5540902"
+      ],
+      "area": "Tokyo"
+    },
+    "Fujiten Ski": {
+      "ids": [
+        "4961295"
+      ],
+      "area": "Tokyo"
+    },
+    "Fukuoka Foodie": {
+      "ids": [
+        "4797890"
+      ],
+      "area": "Fukuoka"
+    },
+    "Hitachi Ashikaga": {
+      "ids": [
+        "5588643"
+      ],
+      "area": "Tokyo"
+    },
+    "Hunter Valley": {
+      "ids": [
+        "5844321"
+      ],
+      "area": "Sydney"
+    },
+    "Itoshima Flower": {
+      "ids": [
+        "5912702"
+      ],
+      "area": "Fukuoka"
+    },
+    "Itoshima Marine": {
+      "ids": [
+        "5912702"
+      ],
+      "area": "Fukuoka"
+    },
+    "Kamakura Highlight": {
+      "ids": [
+        "5724343"
+      ],
+      "area": "Tokyo"
+    },
+    "Kamakura Yokohama": {
+      "ids": [
+        "5724343"
+      ],
+      "area": "Tokyo"
+    },
+    "Kuji Forest Ski": {
+      "ids": [
+        "4843937"
+      ],
+      "area": "Fukuoka"
+    },
+    "Kumamoto Sakura": {
+      "ids": [
+        "5518461"
+      ],
+      "area": "Fukuoka"
+    },
+    "Kumamoto Takachiho": {
+      "ids": [
+        "4973348"
+      ],
+      "area": "Fukuoka"
+    },
+    "Kumamoto Volcano": {
+      "ids": [
+        "4973348"
+      ],
+      "area": "Fukuoka"
+    },
+    "Kyoto & Nara": {
+      "ids": [
+        "4397040"
+      ],
+      "area": "Osaka"
+    },
+    "Mt. Fuji Highlight": {
+      "ids": [
+        "3887808"
+      ],
+      "area": "Tokyo"
+    },
+    "Mt. Fuji Hiking": {
+      "ids": [
+        "4660992"
+      ],
+      "area": "Tokyo"
+    },
+    "Mt. Fuji Signature": {
+      "ids": [
+        "3887808",
+        "4600233"
+      ],
+      "area": "Tokyo"
+    },
+    "Nara Sakura": {
+      "ids": [
+        "5520151"
+      ],
+      "area": "Osaka"
+    },
+    "Osaka & Kobe": {
+      "ids": [
+        "4956172"
+      ],
+      "area": "Osaka"
+    },
+    "Osaka Kobe (Night)": {
+      "ids": [
+        "4956172"
+      ],
+      "area": "Osaka"
+    },
+    "Rokko Snow Park": {
+      "ids": [
+        "4901254"
+      ],
+      "area": "Osaka"
+    },
+    "Sapporo Otaru": {
+      "ids": [
+        "5885335"
+      ],
+      "area": "Sapporo"
+    },
+    "Shakotan Otaru": {
+      "ids": [
+        "6107106"
+      ],
+      "area": "Sapporo"
+    },
+    "Shirakawago Regular": {
+      "ids": [
+        "5728538"
+      ],
+      "area": "Nagoya"
+    },
+    "Toyako Niseko": {
+      "ids": [
+        "5889847"
+      ],
+      "area": "Sapporo"
+    },
+    "Wollongong Kiama": {
+      "ids": [
+        "5938658"
+      ],
+      "area": "Sydney"
+    },
+    "Yanagawa Boat": {
+      "ids": [
+        "5632837"
+      ],
+      "area": "Fukuoka"
+    },
+    "Yanagawa Ukiha": {
+      "ids": [
+        "5632837"
+      ],
+      "area": "Fukuoka"
+    },
+    "Yeti": {
+      "ids": [
+        "3890255"
+      ],
+      "area": "Tokyo"
+    },
+    "Yufuin": {
+      "ids": [
+        "4700281"
+      ],
+      "area": "Fukuoka"
+    },
+    "Yufuin Brewery": {
+      "ids": [
+        "4700281"
+      ],
+      "area": "Fukuoka"
+    },
+    "Yufuin Dazaifu": {
+      "ids": [
+        "4700281"
+      ],
+      "area": "Fukuoka"
+    }
+  },
+  "KK": {
+    "캡슐요트": {
+      "product_no": "11186",
+      "package_letter": "E",
+      "kind": "Course"
+    },
+    "감천미포": {
+      "product_no": "11186",
+      "package_letter": "B",
+      "kind": "Course"
+    },
+    "감천미포 관광": {
+      "product_no": "11186",
+      "package_letter": "A",
+      "kind": "Course"
+    },
+    "청해자감": {
+      "product_no": "11186",
+      "package_letter": "C",
+      "kind": "Course"
+    },
+    "아해자감": {
+      "product_no": "11186",
+      "package_letter": "D",
+      "kind": "Course"
+    },
+    "경주": {
+      "product_no": "17654",
+      "package_letter": "A",
+      "kind": "Course"
+    },
+    "교촌경주": {
+      "product_no": "17654",
+      "package_letter": "B",
+      "kind": "Course"
+    },
+    "경주캡슐": {
+      "product_no": "17654",
+      "package_letter": "E",
+      "kind": "Course"
+    },
+    "경주 Express": {
+      "product_no": "17654",
+      "package_letter": "F",
+      "kind": "Course"
+    },
+    "(어)남쁘아": {
+      "product_no": "9353",
+      "package_letter": "A",
+      "kind": "Package"
+    },
+    "(어)남아": {
+      "product_no": "9353",
+      "package_letter": "B",
+      "kind": "Package"
+    },
+    "레남아": {
+      "product_no": "9353",
+      "package_letter": "C",
+      "kind": "Package"
+    },
+    "쁘남레아": {
+      "product_no": "9353",
+      "package_letter": "D",
+      "kind": "Package"
+    },
+    "알남아": {
+      "product_no": "9353",
+      "package_letter": "E",
+      "kind": "Package"
+    },
+    "(어)남레": {
+      "product_no": "9353",
+      "package_letter": "G",
+      "kind": "Package"
+    },
+    "알남레": {
+      "product_no": "9353",
+      "package_letter": "H",
+      "kind": "Package"
+    },
+    "알레남아": {
+      "product_no": "9353",
+      "package_letter": "F",
+      "kind": "Package"
+    },
+    "남쁘아": {
+      "product_no": "8974",
+      "package_letter": "H",
+      "kind": "Package"
+    },
+    "남쁘": {
+      "product_no": "8974",
+      "package_letter": "B",
+      "kind": "Package"
+    },
+    "남아": {
+      "product_no": "8974",
+      "package_letter": "A",
+      "kind": "Package"
+    },
+    "레남쁘": {
+      "product_no": "8974",
+      "package_letter": "I",
+      "kind": "Package"
+    },
+    "알남": {
+      "product_no": "8974",
+      "package_letter": "C",
+      "kind": "Package"
+    },
+    "남레": {
+      "product_no": "8974",
+      "package_letter": "D",
+      "kind": "Package"
+    },
+    "남이섬투어": {
+      "product_no": "8974",
+      "package_letter": "K",
+      "kind": "Package"
+    },
+    "알레": {
+      "product_no": "8974",
+      "package_letter": "M",
+      "kind": "Package"
+    },
+    "알레아": {
+      "product_no": "8974",
+      "package_letter": "N",
+      "kind": "Package"
+    },
+    "MBC": {
+      "product_no": "167055"
+    },
+    "남이섬 레귤러": {
+      "product_no": "8974"
+    },
+    "에버": {
+      "product_no": "9367"
+    },
+    "남이섬셔틀": {
+      "product_no": "18613"
+    },
+    "알남 : Package H - Alpaca World + Nami Island (25/10/27 ~ 25/11/25)": {
+      "product_no": "8974"
+    },
+    "(B1G1, 성인2명부터 구매 가능, 소인 옵션X)": {
+      "product_no": "1845053"
+    },
+    "(20% 할인)": {
+      "product_no": "1848360"
+    },
+    "부산시티": {
+      "product_no": "11186"
+    },
+    "남이섬 (어비+아침 같은 페이지)": {
+      "product_no": "9353"
+    },
+    "남이섬": {
+      "product_no": "9353"
+    },
+    "남이섬 페이지 (레귤러)": {
+      "product_no": "8974"
+    }
+  },
+  "VI": {},
+  "GG": {}
+}
