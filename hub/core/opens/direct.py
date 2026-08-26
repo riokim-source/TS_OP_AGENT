@@ -30,8 +30,12 @@ NAME_SOURCE = {
     "GG": "productmap",
 }
 
-# 수량 0 으로 '마감' 까지 되는 채널
-CLOSE_BY_ZERO = {"KLOOK"}
+# 수량 0 으로 '마감' 까지 되는 채널.
+# 채널마다 '닫는다' 의 실제 동작이 다르다.
+#   KLOOK  Inventory 0 + Activate OFF
+#   MRT    remainQuantity 0
+#   GG     Block 켜기 (정원 0 이 아니다 — 위 gg_open.close_one 참고)
+CLOSE_BY_ZERO = {"KLOOK", "MRT", "GG"}
 
 # 지역을 사람이 골라야 하는 채널.
 #   KLOOK  packages.py 에 지역이 붙어 있다
@@ -135,12 +139,11 @@ def preview(channel: str, plan: list[dict], target_date: str) -> dict:
         for p in plan:
             qty = int(p.get("qty") or 0)
             name = str(p.get("product") or "")
-            if qty <= 0:
-                warnings.append(f"{name}: 수량 0 은 {CHANNEL_LABEL.get(ch, ch)} "
-                                f"오픈에서 건너뜁니다.")
+            if qty < 0:
                 continue
             rows.append({"지역": p.get("region") or "", "상품": name, "수량": qty,
-                         "방식": "이름으로 찾음", "": ""})
+                         "방식": "이름으로 찾음",
+                         "": "마감(Block)" if qty == 0 else ""})
         return {"rows": rows, "unknown": [], "warnings": warnings,
                 "date_text": target_date}
 

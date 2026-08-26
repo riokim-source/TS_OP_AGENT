@@ -59,13 +59,16 @@ def resolve(plan: list[dict]) -> dict:
     pm = get_map()
     items: dict[str, dict] = {}
     unmapped: list[dict] = []
+    # 수량 0 = 마감. 아래에서 걸러내지 않고 그대로 내려보낸다.
 
     for p in plan:
         if p.get("channel") != "MRT" or p.get("mode") != "qty":
             continue
         qty = int(p.get("qty") or 0)
-        if qty <= 0:
+        if qty < 0:
             continue
+        # 0 은 '마감' 이다 (remainQuantity 0). 예전에는 여기서 걸러내서
+        # 특정 상품 하나만 닫으려면 마감 봇을 통째로 돌려야 했다.
         tour = str(p.get("product") or "")
         entry = pm.get(tour, "MRT")
         if not entry or not entry.get("ids"):
@@ -85,6 +88,8 @@ def resolve(plan: list[dict]) -> dict:
             slot = f"{pid}|{course or ''}"
             cur = items.setdefault(slot, {"id": pid, "qty": 0, "tours": [],
                                           "course": course})
+            # 같은 상품/코스를 여러 투어가 공유하면 큰 값을 쓴다.
+            # 하나라도 운영하면 그날 그 상품은 열려 있어야 한다.
             cur["qty"] = max(cur["qty"], qty)
             if tour not in cur["tours"]:
                 cur["tours"].append(tour)

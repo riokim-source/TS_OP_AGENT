@@ -42,8 +42,9 @@ def resolve(plan: list[dict]) -> dict:
         if p.get("channel") != "GG" or p.get("mode") != "qty":
             continue
         qty = int(p.get("qty") or 0)
-        if qty <= 0:
+        if qty < 0:
             continue
+        # 0 은 '마감' 이다 (GG 는 Block 켜기). gg_open.py 가 그렇게 처리한다.
         by_region.setdefault(p.get("region") or "KOREA", []).append({
             "tour": p.get("product"),
             "qty": qty,

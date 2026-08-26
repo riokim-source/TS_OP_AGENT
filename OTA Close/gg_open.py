@@ -257,6 +257,41 @@ def next_page(page) -> bool:
         return False
 
 
+def close_one(page, card: dict, dry_run: bool) -> dict:
+    """
+    카드 하나 마감: Block 켜기.
+
+    ⚠️ 정원을 0 으로 만드는 것이 아니다. GG 오픈은 '정원 = 예약 + 수량' 이라
+       0 을 넣으면 정원은 이미 찬 상태로 두고 Block 만 풀어 버린다.
+       GG 에서 '닫는다' 는 Block 이다 (마감 봇 gg.py 도 같은 토글을 쓴다).
+    """
+    tid = card["testid"]
+    if card.get("blocked"):
+        return {"testid": tid, "title": card["title"], "result": "성공",
+                "memo": "이미 Block 상태 (마감됨)"}
+    if dry_run:
+        return {"testid": tid, "title": card["title"], "result": "DRY_RUN",
+                "memo": f"DRY: Block 켜기 (현재 {card.get('count')})"}
+
+    root = page.locator(f'[data-testid="{tid}"]').first
+    try:
+        root.scroll_into_view_if_needed(timeout=4_000)
+    except Exception:
+        pass
+    try:
+        root.locator('[data-testid="block-date-toggle"]').first.click(timeout=5_000)
+        page.wait_for_timeout(1_200)
+        after = collect_one(page, tid)
+        if after and not after.get("blocked"):
+            return {"testid": tid, "title": card["title"], "result": "실패",
+                    "memo": "Block 토글을 켰는데 아직 열린 상태"}
+        return {"testid": tid, "title": card["title"], "result": "성공",
+                "memo": "Block 켬 (마감)"}
+    except Exception as e:
+        return {"testid": tid, "title": card["title"], "result": "실패",
+                "memo": f"Block 켜기 실패: {str(e)[:90]}"}
+
+
 def open_one(page, card: dict, qty: int, dry_run: bool) -> dict:
     """카드 하나 오픈: Block 해제 + 정원 = 예약 + qty."""
     tid = card["testid"]
@@ -500,7 +535,10 @@ def run(date_str: str, items: list[dict], port: int, dry_run: bool = False) -> d
                             continue
                         it, share, _old = plan[tid]
                         applied.add(tid)
-                        if share <= 0:
+                        if int(it.get("qty") or 0) == 0:
+                            # 수량 0 = 마감. 아래 '분할 결과 0명' 과는 다른 경우다.
+                            r = close_one(page, c, dry_run)
+                        elif share <= 0:
                             r = {"testid": tid, "title": c["title"], "result": "스킵",
                                  "memo": "분할 결과 0명 (픽업지 수보다 수량이 적음)"}
                         else:

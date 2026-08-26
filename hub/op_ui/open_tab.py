@@ -103,7 +103,13 @@ def render(lock) -> None:
                                  key=f"open-need-rg-{ch}",
                                  help="이 지역의 Chrome 으로 들어갑니다.")
 
-    if not info["can_close"]:
+    # 채널마다 '닫는다' 의 실제 동작이 달라서 무엇이 일어나는지 밝힌다.
+    ZERO_MEANS = {"KLOOK": "Inventory 0 + Activate OFF",
+                  "MRT": "잔여 인원 0", "GG": "Block 켜기"}
+    if info["can_close"]:
+        st.caption(f"수량 **0** 을 넣으면 마감됩니다 — {info['label']} 은 "
+                   f"**{ZERO_MEANS.get(ch, '마감')}**.")
+    else:
         st.caption(f"{info['label']} 은 수량 0 을 건너뜁니다. "
                    f"닫으려면 **Inventory 마감** 을 쓰세요.")
 
@@ -127,7 +133,7 @@ def render(lock) -> None:
         f"{info['label']} 상품명 수량 — 한 줄에 하나, 또는 쉼표로 구분",
         key=TEXT_KEY, height=170,
         placeholder=("에버 12\n경주 16" if ch == "KLOOK" else "Amanohashidate 5"),
-        help=("수량 0 을 넣으면 Inventory 0 + Activate OFF (= 마감) 이 됩니다."
+        help=(f"수량 0 을 넣으면 마감됩니다 ({ZERO_MEANS.get(ch, '')})."
               if info["can_close"] else "수량 0 은 건너뜁니다."))
 
     text = st.session_state.get(TEXT_KEY, "")
