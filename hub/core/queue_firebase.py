@@ -358,7 +358,23 @@ def stop_requested(job_id: str) -> bool:
     return val
 
 
-def active() -> list[dict]:
+BEAT_STALE_SEC = 15 * 60      # 이만큼 신호가 없으면 죽은 작업으로 본다
+
+
+def is_stale(d: dict) -> bool:
+    """
+    신호가 끊긴 지 오래인가.
+
+    실행 중이면 Agent 가 로그를 보낼 때마다 beat 가 갱신된다. 마감·오픈은
+    몇 초마다 로그가 나오므로 15분은 넉넉하다. 실행 도중 Agent 창이 닫히면
+    작업은 running 인 채로 영원히 남아 모든 버튼을 잠근다.
+    """
+    if str(d.get("status")) not in ("pending", "running"):
+        return False
+    return (time.time() - float(d.get("beat") or 0)) > BEAT_STALE_SEC
+
+
+def active(include_stale: bool = False) -> list[dict]:
     try:
         jobs = _call("GET", "jobs", params={"shallow": "true"}) or {}
     except Exception:
@@ -366,9 +382,32 @@ def active() -> list[dict]:
     out = []
     for jid in sorted(jobs if isinstance(jobs, dict) else {}):
         d = get(jid, with_logs=False)
-        if d and d.get("status") in ("pending", "running"):
-            out.append(d)
+        if not d or d.get("status") not in ("pending", "running"):
+            continue
+        if is_stale(d):
+            d["stale"] = True
+            if not include_stale:
+                continue
+        out.append(d)
     return out
+
+
+def drop_stale() -> list[str]:
+    """죽은 작업을 정리한다. 무엇을 정리했는지 돌려준다."""
+    done = []
+    for d in active(include_stale=True):
+        if d.get("stale"):
+            jid = str(d.get("id") or "")
+            try:
+                finish(jid, None, "Agent 와 연결이 끊겨 결과를 받지 못했습니다.")
+            except Exception:
+                pass
+            try:
+                remove(jid)
+            except Exception:
+                pass
+            done.append(f"{d.get('title') or jid}")
+    return done
 
 
 def recent(limit: int = 30) -> list[dict]:
@@ -406,3 +445,39 @@ def shared_set(key: str, value) -> bool:
         return True
     except Exception:
         return False
+
+
+# ── 실행 기록 (요약만) ────────────────────────────────────────────────────
+# 전체 로그는 실행한 PC 에 남는다. 여기에는 '무엇이 언제 몇 건 실패했는지' 만
+# 둔다. 중계 지점을 저장소로 쓰지 않기 위해서다.
+RUNS_KEEP = 120
+
+
+def run_save(rec: dict) -> bool:
+    rid = str(rec.get("id") or "")
+    if not rid:
+        return False
+    try:
+        _call("PUT", f"runs/{safe_name(rid)}", rec)
+    except Exception:
+        return False
+    try:                      # 오래된 것부터 지운다
+        got = _call("GET", "runs", params={"shallow": "true"}) or {}
+        keys = sorted(got)
+        for k in keys[:-RUNS_KEEP]:
+            _call("DELETE", f"runs/{k}")
+    except Exception:
+        pass
+    return True
+
+
+def run_list(limit: int = 60) -> list:
+    try:
+        got = _call("GET", "runs") or {}
+    except Exception:
+        return []
+    if not isinstance(got, dict):
+        return []
+    rows = [v for v in got.values() if isinstance(v, dict)]
+    rows.sort(key=lambda x: str(x.get("id") or ""), reverse=True)
+    return rows[:limit]

@@ -5361,6 +5361,36 @@ def main():
         if not browser.contexts:
             raise Exception("열려 있는 Chrome context를 찾지 못했습니다. start_chrome.bat으로 크롬을 먼저 실행하세요.")
         context = browser.contexts[0]
+
+        # ⚠️ 대화상자를 우리가 받는다. 안 받으면 Playwright 가 자동으로 닫는데,
+        #    그 처리가 Node 쪽에서 돌다가 페이지가 사라지면 아무도 받지 않는
+        #    오류가 되어 프로세스가 통째로 죽는다.
+        #    (2026-08-26: Australia 워커가 이걸로 끝나 그 지역 2건이 날아갔다)
+        def _swallow_dialog(dialog):
+            try:
+                kind = getattr(dialog, "type", "?")
+                text = (getattr(dialog, "message", "") or "")[:120]
+            except Exception:
+                kind, text = "?", ""
+            try:
+                dialog.dismiss()
+            except Exception:
+                pass          # 페이지가 이미 사라졌으면 닫을 것도 없다
+            print(f"[안내] 브라우저 알림 닫음 ({kind}): {text}")
+
+        def _hook_dialog(pg):
+            try:
+                pg.on("dialog", _swallow_dialog)
+            except Exception:
+                pass
+
+        for _pg in context.pages:
+            _hook_dialog(_pg)
+        try:
+            context.on("page", _hook_dialog)      # 새로 열리는 탭에도
+        except Exception as e:
+            print(f"[주의] 알림 처리기 설정 실패 (계속 진행): {e}")
+
         page = _pick_klook_page(context)
 
  # ── viewport 강제 ( 2560x1440) ──────────────────────

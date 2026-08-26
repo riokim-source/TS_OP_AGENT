@@ -221,7 +221,38 @@ def date_picker(label: str = "대상 날짜", key: str = "target_date") -> date:
 
 
 def running_banner() -> dict | None:
-    """지금 이 PC 에서 도는 작업이 있으면 알려준다 (다른 화면에서 시작한 것 포함)."""
+    """
+    지금 도는 작업이 있으면 알려준다.
+
+    central 에서는 중계 지점을 본다 (이 서버의 잠금은 의미가 없다).
+    신호가 끊긴 지 오래인 작업은 '돌고 있다' 고 보지 않고, 대신 정리할
+    수 있게 보여준다. 그대로 두면 모든 실행 버튼이 영영 잠긴다.
+    (2026-08-26: 오픈이 running 인 채로 남아 41분간 아무것도 못 눌렀다)
+    """
+    import dispatch
+    if dispatch.is_central():
+        from core import queue as Q
+        try:
+            dead = Q.stale()
+        except Exception:
+            dead = []
+        if dead:
+            names = ", ".join(str(d.get("title") or d.get("id")) for d in dead[:3])
+            st.warning(
+                f"멈춘 작업이 있습니다: **{names}** — 실행 도중 그 PC 의 Agent 창이 "
+                "닫힌 것으로 보입니다. 결과는 받지 못했습니다.", icon="⚠️")
+            if st.button("멈춘 작업 정리", key="btn-drop-stale"):
+                got = Q.drop_stale()
+                st.success(f"{len(got)}건 정리했습니다.")
+                st.rerun()
+
+        for d in (Q.active() or []):
+            st.warning(f"실행 중: **{d.get('title')}** ({d.get('agent')}, "
+                       f"{d.get('created', '')} 시작) — 끝나야 다른 작업을 "
+                       f"시작할 수 있습니다.", icon="⏳")
+            return d
+        return None
+
     lock = read_lock()
     if not lock:
         return None

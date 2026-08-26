@@ -52,6 +52,7 @@ from core.opens import gg_open, klook_open, mrt_open    # noqa: E402
 from core.routing import get_routing                    # noqa: E402
 
 CONFIG = paths.DATA_DIR / "agent_config.json"
+AGENT_NAME = ""          # main() 에서 채운다 (기록에 '어느 PC' 를 남기려고)
 POLL_IDLE = 3.0          # 할 일 없을 때 물어보는 간격(초)
 FLUSH_SEC = 2.0          # 로그를 중계 지점에 보내는 간격
 BEAT_SEC = 10.0          # 살아있다고 알리는 간격
@@ -160,6 +161,41 @@ class RemoteJob:
             Q.finish(self.id, self.summary, self.error)
         except Exception as e:
             print(f"[AGENT] 완료 보고 실패: {str(e)[:120]}")
+        self._save_run_record()
+
+    def _save_run_record(self) -> None:
+        """
+        중앙 화면에서도 보이도록 '요약' 을 중계 지점에 남긴다.
+
+        전체 로그는 이 PC 의 hub/logs/runs 에 있다. 중계는 저장소가 아니므로
+        여기에는 무엇이 언제 몇 건 실패했는지만 둔다. 아침에 실패를 되짚는
+        일은 팀 누구나 해야 한다.
+        """
+        try:
+            res = list(self.local.results)
+            fail = [r for r in res
+                    if "성공" not in str(r.get("result", ""))
+                    and "집계" not in str(r.get("result", ""))]
+            rec = {
+                "id": self.id,
+                "agent": AGENT_NAME or "",
+                "kind": self.kind,
+                "title": self.title,
+                "started": self.local.started_text,
+                "finished": datetime.now().strftime("%H:%M:%S"),
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "seconds": int(time.time() - self.local.started_at),
+                "error": self.error or "",
+                "summary": self.summary or {},
+                "total": len(res),
+                "failed": len(fail),
+                "results": res[:400],
+                "logs": [f"{l.get('t','')} [{l.get('src','')}] {l.get('line','')}"
+                         for l in list(self.local.logs)[-300:]],
+            }
+            Q.run_save(rec)
+        except Exception as e:
+            print(f"[AGENT] 기록 남기기 실패(무시): {str(e)[:100]}")
 
 
 # ── 작업 실행 ─────────────────────────────────────────────────────────────
@@ -378,10 +414,12 @@ def release_single_instance() -> None:
 
 
 def main() -> None:
+    global AGENT_NAME
     if not claim_single_instance():
         return
     cfg = load_config()
     name = cfg["agent"]
+    AGENT_NAME = name
 
     ok, detail = Q.available()
     print("=" * 66)

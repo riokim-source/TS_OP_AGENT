@@ -103,6 +103,22 @@ def active() -> list[dict]:
     return _be().active()
 
 
+def stale() -> list[dict]:
+    """신호가 끊긴 지 오래인 작업 (화면에서 '정리' 를 눌러 없앨 수 있게)."""
+    fn = getattr(_be(), "active", None)
+    if not fn:
+        return []
+    try:
+        return [d for d in fn(include_stale=True) if d.get("stale")]
+    except TypeError:
+        return []
+
+
+def drop_stale() -> list[str]:
+    fn = getattr(_be(), "drop_stale", None)
+    return fn() if fn else []
+
+
 def recent(limit: int = 30) -> list[dict]:
     return _be().recent(limit)
 
@@ -116,3 +132,14 @@ def shared_get(key: str):
 def shared_set(key: str, value) -> bool:
     fn = getattr(_be(), "shared_set", None)
     return bool(fn(key, value)) if fn else False
+
+
+def run_save(rec: dict) -> bool:
+    """끝난 작업의 요약을 남긴다 (전체 로그는 실행한 PC 에)."""
+    fn = getattr(_be(), "run_save", None)
+    return bool(fn(rec)) if fn else False
+
+
+def run_list(limit: int = 60) -> list:
+    fn = getattr(_be(), "run_list", None)
+    return fn(limit) if fn else []

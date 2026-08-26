@@ -392,9 +392,28 @@ def _open_controls(plan: list, lock) -> None:
                            key=f"oc-{ch}", disabled=n == 0):
                 channels.append(ch)
 
+    # ── 지역 (비우면 전체) ────────────────────────────────────────────────
+    # 한 지역만 실패했을 때 그 지역만 다시 열 수 있어야 한다.
+    # 계획에 지역이 붙어 있지 않은 항목(지역 구분이 없는 OTA)은 늘 포함한다.
+    plan_regions = sorted({str(p.get("region") or "") for p in plan
+                           if p.get("channel") in channels and p.get("region")})
+    regions: list[str] = []
+    if plan_regions:
+        with st.expander(f"지역 지정 (비우면 전체 {len(plan_regions)}개)"):
+            rcols = st.columns(len(plan_regions))
+            for col, rg in zip(rcols, plan_regions):
+                n = sum(1 for p in plan
+                        if p.get("channel") in channels and p.get("region") == rg)
+                with col:
+                    if st.checkbox(f"{rg} ({n})", value=False, key=f"org-{rg}"):
+                        regions.append(rg)
+
     agent = dispatch.agent_picker("agent_open") if dispatch.is_central() else None
     busy = bool(lock) or dispatch.busy()
-    mine = [p for p in plan if p["channel"] in channels]
+    mine = [p for p in plan if p["channel"] in channels
+            and (not regions or not p.get("region") or p.get("region") in regions)]
+    if regions:
+        st.caption(f"선택한 지역: {', '.join(regions)} — {len(mine)}건")
     blocked = busy or not mine or (dispatch.is_central() and not agent)
 
     def start(dry: bool) -> None:

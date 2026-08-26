@@ -239,6 +239,11 @@ def stop_requested(job_id: str) -> bool:
 
 
 # ── 조회 ─────────────────────────────────────────────────────────────────
+def drop_stale() -> list[str]:
+    """파일 백엔드는 같은 PC 안이라 죽은 작업이 남을 일이 거의 없다."""
+    return []
+
+
 def active() -> list[dict]:
     """지금 대기/실행 중인 작업. 오래 소식 없는 실행은 죽은 것으로 표시."""
     _ensure()
@@ -295,3 +300,36 @@ def shared_set(key: str, value) -> bool:
         return True
     except Exception:
         return False
+
+
+# ── 실행 기록 (요약만) ────────────────────────────────────────────────────
+RUNS_DIR = DATA_DIR / "runs"
+RUNS_KEEP = 120
+
+
+def run_save(rec: dict) -> bool:
+    rid = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(rec.get("id") or ""))
+    if not rid:
+        return False
+    try:
+        RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        (RUNS_DIR / f"{rid}.json").write_text(
+            json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
+        old = sorted(RUNS_DIR.glob("*.json"))
+        for p in old[:-RUNS_KEEP]:
+            p.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
+def run_list(limit: int = 60) -> list:
+    if not RUNS_DIR.exists():
+        return []
+    out = []
+    for p in sorted(RUNS_DIR.glob("*.json"), reverse=True)[:limit]:
+        try:
+            out.append(json.loads(p.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    return out
