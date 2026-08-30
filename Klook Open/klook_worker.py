@@ -1264,10 +1264,47 @@ def click_adult_option(page):
         except Exception:
             return 0
 
+    def wait_option_candidates(label: str, timeout_ms: int = 8000) -> int:
+        """
+        옵션이 화면에 나타날 때까지 기다린다.
+
+        검색 결과 줄은 누르면 '펼쳐지는' 패널이다. 펼쳐지기 전에 세면 0 이
+        나오는데, 예전에는 한 번만 세고 넘어가 그대로 실패했다.
+        (2026-08-30: 일본 3건이 이것 때문에 실패)
+        """
+        waited = 0
+        while waited < timeout_ms:
+            n = count_option_candidates(label)
+            if n > 0:
+                if waited:
+                    _v(f"[안내] {label} 옵션이 {waited}ms 뒤에 나타남")
+                return n
+            page.wait_for_timeout(400)
+            waited += 400
+        return 0
+
+    def expand_package_panel() -> bool:
+        """접힌 패널을 펼친다. 옵션은 그 안에 있다."""
+        try:
+            return bool(page.evaluate(
+                """() => {
+ const item = document.querySelector(
+ '.ant-collapse-item:not(.ant-collapse-item-active) .ant-collapse-header');
+ if (!item) return false;
+ item.click();
+ return true;
+ }"""))
+        except Exception:
+            return False
+
     def try_click_option(label: str) -> bool:
         _v(f"[진행] {label} 옵션 탐색")
 
-        total = count_option_candidates(label)
+        total = wait_option_candidates(label)
+        if total == 0 and expand_package_panel():
+            _v(f"[진행] {label} 옵션이 안 보여 패널을 펼침")
+            page.wait_for_timeout(800)
+            total = wait_option_candidates(label, timeout_ms=6000)
         if total > 0:
             for idx in range(min(6, total)):
                 try:
@@ -1324,7 +1361,32 @@ def click_adult_option(page):
     if try_click_option("Person"):
         return
 
-    raise Exception("Adult 또는 Person 옵션을 찾지 못했습니다.")
+    # 여기까지 왔으면 화면이 예상과 다르다. 다음에 또 나면 바로 알 수 있게
+    # '그때 무엇이 보였는지' 를 남긴다. 메시지만 남기면 재현할 수가 없다.
+    hint = ""
+    try:
+        info = page.evaluate(
+            """() => {
+ const norm = s => (s||'').replace(/\s+/g,' ').trim();
+ const seen = [];
+ for (const el of document.querySelectorAll('div,span,button,a')) {
+ const t = norm(el.innerText || '');
+ if (!t || t.length > 30) continue;
+ const r = el.getBoundingClientRect();
+ if (r.width < 20 || r.height < 15) continue;
+ seen.push(t);
+ }
+ return {url: location.href,
+ texts: [...new Set(seen)].slice(0, 25),
+ panels: document.querySelectorAll('.ant-collapse-item').length,
+ open: document.querySelectorAll('.ant-collapse-item-active').length};
+ }""")
+        hint = (f" | URL={str(info.get('url'))[:110]}"
+                f" | 패널 {info.get('panels')}개(펼침 {info.get('open')})"
+                f" | 화면글자={info.get('texts')}")
+    except Exception:
+        pass
+    raise Exception("Adult 또는 Person 옵션을 찾지 못했습니다." + hint)
 
 
 def ensure_price_inventory_section(page):
@@ -2347,21 +2409,56 @@ def confirm_popup(page):
         except Exception:
             return False
 
-    def click_button(selector, label) -> bool:
-        btn = page.locator(selector).first
+    def click_button(selector, label, tries: int = 3) -> bool:
+        """
+        버튼을 누른다. 사라지면 다시 찾아서 누른다.
+
+        ⚠️ Ant Design 모달은 뜬 뒤에도 다시 그려진다. 그때 버튼 요소가
+           DOM 에서 떨어져 나가(detached) 클릭이 실패한다.
+           _click_safe 의 세 단계는 모두 '찾아 두고 → 누른다' 라 그 사이에
+           사라지면 전부 실패한다. 그래서 찾기부터 다시 한다.
+           (2026-08-30: MBC·남이섬셔틀이 이것 때문에 저장이 안 됐다)
+        """
+        last = ""
+        for attempt in range(1, tries + 1):
+            btn = page.locator(selector).first        # 매번 새로 찾는다
+            try:
+                btn.wait_for(state='visible', timeout=2500)
+            except Exception:
+                last = "버튼이 보이지 않음"
+                page.wait_for_timeout(400)
+                continue
+            # 모달이 뜨는 중에 바로 누르면 'not stable' 로 거부당한다. 잠깐 앉힌다.
+            page.wait_for_timeout(350 + attempt * 150)
+            try:
+                _click_safe(btn, timeout=2500)
+                if attempt > 1:
+                    _v(f'[진행] {label} 클릭 완료 ({attempt}번째 시도)')
+                else:
+                    _v(f'[진행] {label} 클릭 완료')
+                return True
+            except Exception as e:
+                last = str(e).split("Call log")[0].strip()[:90]
+                _v(f'[안내] {label} 클릭 실패({attempt}/{tries}) — 다시 찾는다: {last}')
+                page.wait_for_timeout(500)
+
+        # 마지막 수단: '찾아서 누르기' 를 한 번에 한다. 사라질 틈이 없다.
         try:
-            btn.wait_for(state='visible', timeout=2500)
+            done = page.evaluate(
+                """(sel) => {
+ const el = document.querySelector(sel);
+ if (!el) return false;
+ el.click();
+ return true;
+ }""", selector.replace("xpath=", ""))
+            if done:
+                _v(f'[진행] {label} 클릭 완료 (한 번에 찾아 누름)')
+                return True
         except Exception:
-            return False
-        # 모달이 뜨는 중에 바로 누르면 'not stable' 로 거부당한다. 잠깐 앉힌다.
-        page.wait_for_timeout(350)
-        try:
-            _click_safe(btn, timeout=2500)
-            _v(f'[진행] {label} 클릭 완료')
-            return True
-        except Exception as e:
-            print(f'[오류] {label} 클릭 실패: {e}')
-            return False
+            pass
+
+        print(f'[오류] {label} 클릭 실패: {last}')
+        return False
 
     def wait_for_hidden(selector, label, timeout_ms=8000) -> bool:
         deadline = timeout_ms
