@@ -17,16 +17,28 @@ from .memo import available_languages
 from .. import pickups as lmpickups
 
 
-def build_panels(raw: bytes, filename: str) -> dict:
+def build_panels(raw: bytes, filename: str,
+                 pick_dates: list | None = None) -> dict:
     """
     반환: {"ok", "panels", "loaded", "option_split_tours", "pickup_catalog", "df"}
     실패 시 {"ok": False, "error"}.
+
+    pick_dates 를 주면 그 두 날짜를 쓴다. 안 주면 가장 나중 2개다.
+
+    ⚠️ 파일에 날짜가 3개 이상이면 '가장 나중 2개' 가 내일이 아닐 수 있다.
+       추출 범위를 넓게 잡아 9/15 가 섞여 들어오면 오픈 대상 패널이 9/15 가
+       되고, 내일만 있는 투어는 화면에 아예 안 나와 그날 안 열린다.
+       그래서 날짜가 3개 이상이면 loaded["date_choice"] 로 알리고,
+       화면에서 사람이 직접 고르게 한다.
     """
     df = lmloader.read_reservations(raw, filename)
-    dates = lmloader.latest_dates(df, 2)
+    all_dates = lmloader.all_dates(df)
+    dates = (pick_dates or [])[:2] or lmloader.latest_dates(df, 2)
+    dates = [d for d in dates if d in all_dates][:2]
     if len(dates) < 2:
         return {"ok": False,
                 "error": "투어일자가 2개 이상 있어야 합니다 (오늘 + 내일)."}
+    dates = sorted(dates, reverse=True)
 
     pk_cat = lmpickups.load()
     panels = []
@@ -61,6 +73,11 @@ def build_panels(raw: bytes, filename: str) -> dict:
             "filename": filename,
             "rows": int(len(df)),
             "dates": [d.isoformat() for d in dates],
+            # 읽다가 버린 행 (이유별). 비어 있으면 전부 정상이다.
+            "problems": list(df.attrs.get("problems") or []),
+            # 파일에 있는 모든 투어일자. 3개 이상이면 화면에서 고르게 한다.
+            "all_dates": [d.isoformat() for d in all_dates],
+            "date_choice": len(all_dates) > 2,
             "at": datetime.now().strftime("%H:%M:%S"),
         },
         "option_split_tours": C.OPTION_SPLIT_TOURS,

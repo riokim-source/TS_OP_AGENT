@@ -328,18 +328,66 @@ def _run_open(job: RemoteJob, p: dict) -> None:
     if "GG" in channels and any(x["channel"] == "GG" for x in mine):
         runners.append(("GG", lambda: gg_open.run(job, mine, target, dry_run=dry)))
 
+    # ⚠️ 실패한 OTA 는 반드시 결과에 남겨야 한다.
+    #
+    #    예전에는 두 가지가 겹쳐서 실패가 통째로 사라졌다.
+    #      1) 여기서 예외를 잡아 로그 한 줄만 남기고 넘어갔다
+    #      2) MRT/GG 는 스스로 job.done(error=...) 로 실패를 보고하는데
+    #         (Chrome 미설정 / 포트 충돌 / 부팅 실패 / 맵핑 없음),
+    #         맨 끝의 job.done(summary=...) 이 error 를 None 으로 덮었다
+    #    그래서 Klook 이 통째로 안 열렸는데도 화면은 '실패 0 · 완료' 였다.
+    #    직원은 열렸다고 믿고 넘어가고, 그날 재고는 0인 채로 남는다.
+    #
+    #    이제 채널마다 결과 한 줄을 남기고, 하나라도 실패하면 job 전체를
+    #    error 로 끝낸다. 실행 기록의 '실패/스킵' 이 이걸 센다.
+    failed: list[tuple[str, str]] = []
+    ran: list[str] = []
+    skipped: list[str] = []
+
     for name, fn in runners:
         if job.stopping:
             job.log("SYS", f"[중단] {name} 실행 안 함")
-            break
+            skipped.append(name)
+            job.result({"channel": name, "region": "", "item": "(채널 전체)",
+                        "result": "중단", "memo": "사용자가 중단해서 실행하지 않음"})
+            continue
         job.log("SYS", f"===== {name} 오픈 시작 =====")
+        before = len(job.results)
+        job.error = None                  # 앞 채널의 오류를 물려받지 않는다
+        why = ""
         try:
             fn()
+            why = str(job.error or "")    # 러너가 스스로 보고한 실패
         except Exception as e:
+            why = f"{type(e).__name__}: {e}"
             job.log("SYS", f"[오류] {name}: {e}")
+
+        made = len(job.results) - before
+        if not why and made == 0:
+            # 열 것이 있어서 러너를 돌렸는데 아무것도 안 나왔다.
+            # 조용히 넘어가면 '했다' 로 보이므로 눈에 띄게 남긴다.
+            why = "결과가 하나도 없습니다 (로그를 확인하세요)"
+
+        if why:
+            failed.append((name, why))
+            job.log("SYS", f"[실패] {name}: {why}")
+            job.result({"channel": name, "region": "", "item": "(채널 전체)",
+                        "result": "실패", "memo": why[:300]})
+        else:
+            ran.append(name)
+            job.log("SYS", f"[완료] {name} {made}건")
+
         # 각 러너가 job.done() 을 부르므로 다음 러너를 위해 되돌린다
         job.finished = False
-    job.done(summary={"channels": [n for n, _ in runners], "dry_run": dry})
+
+    summary = {"channels": [n for n, _ in runners], "dry_run": dry,
+               "성공": ran, "실패": [n for n, _ in failed], "중단": skipped}
+    if failed:
+        job.done(summary=summary,
+                 error="열지 못한 OTA — " + " / ".join(f"{n}: {w[:120]}"
+                                                       for n, w in failed))
+    else:
+        job.done(summary=summary)
 
 
 BUSY = {"on": False}          # 지금 작업을 돌고 있나

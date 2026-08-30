@@ -175,6 +175,61 @@ APP_PASSWORD = "off"
     st.stop()
 
 
+def who() -> str:
+    """
+    지금 화면을 쓰는 사람.
+
+    이 앱에는 로그인이 없다. 대신 이름을 주소에 남긴다(?who=홍길동).
+    새로고침해도 유지되고, 즐겨찾기에 넣으면 다음부터 안 묻는다.
+    접속 암호를 주소에 남기는 것과 같은 방식이다.
+
+    왜 필요한가
+        수량을 저장할 때 사람을 구분하지 않으면 두 사람이 같은 파일을
+        열었을 때 서로의 값을 덮어쓴다. 이름이 없으면 다 같은 자리를 쓴다.
+    """
+    v = str(st.session_state.get("_who") or "").strip()
+    if v:
+        return v
+    try:
+        v = str(st.query_params.get("who") or "").strip()
+    except Exception:
+        v = ""
+    if v:
+        st.session_state["_who"] = v
+    return v
+
+
+def who_input(key: str = "who_in") -> str:
+    """이름을 묻는 칸. 이미 적었으면 바꿀 수 있게만 보여준다."""
+    cur = who()
+    if cur:
+        c1, c2 = st.columns([4, 1])
+        c1.caption(f"작업자: **{cur}** — 수량은 이 이름으로 저장됩니다")
+        if c2.button("이름 바꾸기", width="stretch", key=key + "-chg"):
+            st.session_state.pop("_who", None)
+            try:
+                del st.query_params["who"]
+            except Exception:
+                pass
+            st.rerun()
+        return cur
+
+    st.info("이름을 적으면 **내가 넣은 수량만** 되살아납니다. "
+            "안 적어도 쓸 수 있지만, 여러 명이 같이 쓰면 서로 덮어씁니다.",
+            icon="🙋")
+    c1, c2 = st.columns([4, 1])
+    typed = c1.text_input("이름", key=key, placeholder="예: 김리오",
+                          label_visibility="collapsed")
+    if c2.button("저장", width="stretch", key=key + "-ok") and typed.strip():
+        st.session_state["_who"] = typed.strip()
+        try:
+            st.query_params["who"] = typed.strip()
+        except Exception:
+            pass
+        st.rerun()
+    return ""
+
+
 def page(title: str, icon: str = "") -> None:
     st.set_page_config(page_title=f"{title} · TOURSTORY OP", page_icon=icon or "🧭",
                        layout="wide")

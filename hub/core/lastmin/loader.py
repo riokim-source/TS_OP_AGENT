@@ -71,6 +71,10 @@ def read_reservations(source, filename: str = "") -> pd.DataFrame:
         if col not in df.columns:
             df[col] = None
 
+    # 고치기 전 원본을 들고 있는다 ('숫자가 아니었다' 는 고친 뒤엔 알 수 없다)
+    raw_people = df["People"].copy()
+    raw_date = df["Date"].copy()
+
     df["People"] = pd.to_numeric(df["People"], errors="coerce").fillna(0).astype(int)
     df["TourDate"] = pd.to_datetime(df["Date"], errors="coerce").dt.date
     # 예약이 '언제 들어왔는지'. 전일 패널의 'Last Min 10시 후 예약' 집계에 쓴다.
@@ -78,7 +82,47 @@ def read_reservations(source, filename: str = "") -> pd.DataFrame:
     df["OptionName"] = df["Option"].map(option_label)
     for col in ("Area", "Product", "Agency", "Language", "Pickup"):
         df[col] = df[col].astype("object").where(df[col].notna(), None)
+
+    # ⚠️ 읽다가 버린 행은 반드시 말해야 한다.
+    #    날짜를 못 읽거나 Area/Product 가 비어 있으면 그 행은 집계에서
+    #    조용히 빠진다 (groupby 가 결측을 버린다). 그러면 그 투어는 화면에
+    #    아예 안 보이고, 안 보이니 수량도 못 넣고, 그날 안 열린다.
+    #    숫자가 맞는지가 아니라 '빠진 게 있는지' 를 사람이 알아야 한다.
+    df.attrs["problems"] = _scan_problems(df, raw_people, raw_date)
     return df
+
+
+def _scan_problems(df: pd.DataFrame, raw_people, raw_date) -> list[dict]:
+    """집계에서 빠지거나 값이 이상한 행을 이유별로 센다."""
+    out: list[dict] = []
+
+    def add(reason: str, mask, fix: str) -> None:
+        n = int(mask.sum())
+        if n:
+            out.append({"reason": reason, "rows": n,
+                        "people": int(df.loc[mask, "People"].sum()), "fix": fix})
+
+    add("날짜를 읽지 못함",
+        df["TourDate"].isna() & raw_date.notna(),
+        "Date 칸의 형식을 확인하세요 (예: 2026-08-31)")
+    add("날짜 칸이 비어 있음", raw_date.isna(),
+        "Date 가 빈 행입니다")
+    for col, label in (("Area", "지역"), ("Product", "상품")):
+        blank = df[col].isna() | df[col].map(
+            lambda v: isinstance(v, str) and not v.strip())
+        add(f"{label}({col}) 칸이 비어 있음", blank,
+            f"{col} 를 채우세요 — 이 행은 화면에 안 나옵니다")
+    add("인원이 숫자가 아님",
+        pd.to_numeric(raw_people, errors="coerce").isna() & raw_people.notna(),
+        "People 을 숫자로 고치세요 (0 으로 처리됨)")
+    add("인원이 음수", df["People"] < 0,
+        "People 이 음수입니다 — 합계에서 빼집니다")
+    return out
+
+
+def all_dates(df: pd.DataFrame) -> list[date]:
+    """파일에 들어 있는 모든 투어일자 (나중 것 먼저)."""
+    return sorted(df["TourDate"].dropna().unique(), reverse=True)
 
 
 def latest_dates(df: pd.DataFrame, count: int = 2) -> list[date]:

@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import date
 
 import streamlit as st
 
 import dispatch
 import open_tab
-from common import CHANNEL_LABEL, date_picker, render_logs, render_results
+from common import (CHANNEL_LABEL, date_picker, render_logs, render_results,
+                    who, who_input)
 from core import paths
 from core import pickups as lmpickups
 from core.lastmin import constants as C
@@ -44,11 +46,12 @@ def _entry(pi: int, row: dict) -> dict:
     return e
 
 
-def _load(raw: bytes, filename: str) -> bool:
-    r = build_panels(raw, filename)
+def _load(raw: bytes, filename: str, pick_dates=None) -> bool:
+    r = build_panels(raw, filename, pick_dates=pick_dates)
     if not r.get("ok"):
         st.error(r.get("error", "변환 실패"))
         return False
+    st.session_state["lm_raw"] = raw          # 날짜를 바꿔 다시 읽을 때 쓴다
     st.session_state["lm_panels"] = r["panels"]
     st.session_state["lm_loaded"] = r["loaded"]
     st.session_state["lm_catalog"] = r["pickup_catalog"]
@@ -58,7 +61,7 @@ def _load(raw: bytes, filename: str) -> bool:
     valid = {f"{pi}::{row['key']}"
              for pi, p in enumerate(r["panels"])
              for g in p["groups"] for a in g["areas"] for row in a["rows"]}
-    saved = lmentries.prune(lmentries.load(r["loaded"]), valid)
+    saved = lmentries.prune(lmentries.load(r["loaded"], who()), valid)
     st.session_state["lm_entries"] = saved
     # ⚠️ 위젯 키가 세션에 남아 있으면 Streamlit 이 그 값을 우선한다.
     #    되살린 수량이 화면에 안 나오고 이전 값이 그대로 보인다.
@@ -100,10 +103,93 @@ def _panels_payload() -> list:
              "rows": _rows_for(pi)} for pi, p in enumerate(panels)]
 
 
+def _others_note(L: dict) -> None:
+    """
+    같은 파일을 만지고 있는 다른 사람을 알린다.
+
+    ⚠️ 두 사람이 각자 수량을 넣고 한쪽이 실행하면 상대 몫이 빠진 채로
+       열린다. 막지는 않는다 — 누가 몇 건 넣었는지 보여주고 사람이
+       이야기해서 정하게 한다.
+    """
+    try:
+        rest = lmentries.others(L, who())
+    except Exception:
+        return
+    if not rest:
+        return
+    st.warning("같은 파일을 **다른 사람도** 작업하고 있습니다. "
+               "각자 넣은 수량은 따로 저장되므로, 실행 전에 누가 넣을지 정하세요.",
+               icon="👥")
+    st.dataframe([{"사람": r["who"], "넣은 투어": r["count"], "마지막 저장": r["at"]}
+                  for r in rest], width="stretch", hide_index=True)
+
+
+def _dropped_note(L: dict) -> None:
+    """
+    읽다가 버린 행을 이유와 함께 보여준다.
+
+    ⚠️ 조용히 빠지는 것이 제일 위험하다. Area 나 Product 가 비어 있으면
+       그 행은 집계에서 빠져 투어가 화면에 아예 안 나온다. 안 보이니
+       수량도 못 넣고, 그날 그 투어는 안 열린다.
+       (숫자가 맞는지보다 '빠진 게 있는지' 를 사람이 알아야 한다)
+    """
+    probs = L.get("problems") or []
+    if not probs:
+        return
+    rows = sum(int(p.get("rows") or 0) for p in probs)
+    pax = sum(int(p.get("people") or 0) for p in probs)
+    st.warning(f"**{rows}행 (인원 {pax}명)** 이 집계에서 빠지거나 값이 이상합니다. "
+               "빠진 투어는 화면에 안 나오고, 그대로 두면 오늘 열리지 않습니다.",
+               icon="⚠️")
+    st.dataframe(
+        [{"이유": p["reason"], "행": p["rows"], "인원": p["people"],
+          "어떻게 할까": p["fix"]} for p in probs],
+        width="stretch", hide_index=True)
+
+
+def _date_choice(L: dict) -> None:
+    """
+    파일에 투어일자가 3개 이상이면 사람이 고르게 한다.
+
+    ⚠️ 기본은 '가장 나중 2개' 다. 추출 범위를 넓게 잡아 9/15 가 섞여
+       들어오면 오픈 대상이 9/15 가 되고, 내일만 있는 투어는 화면에
+       아예 안 나와 그날 안 열린다. 날짜가 늘어난 것을 사람이 모르면
+       끝까지 모른다.
+    """
+    if not L.get("date_choice"):
+        return
+    every = list(L.get("all_dates") or [])
+    now = list(L.get("dates") or [])
+    st.warning(f"이 파일에 투어일자가 **{len(every)}개** 있습니다 "
+               f"({', '.join(every)}). 지금은 가장 나중 2개(**{' / '.join(now)}**)로 "
+               "보고 있습니다. 내일 것이 맞는지 확인하세요.", icon="📅")
+    c1, c2, c3 = st.columns([2, 2, 1])
+    with c1:
+        a = st.selectbox("오픈 대상 (최신)", every,
+                         index=every.index(now[0]) if now and now[0] in every else 0,
+                         key="lm_pick_a")
+    with c2:
+        rest = [d for d in every if d != a]
+        prev = now[1] if len(now) > 1 and now[1] in rest else (rest[0] if rest else a)
+        b = st.selectbox("전일 (10시 후 예약)", rest,
+                         index=rest.index(prev) if prev in rest else 0,
+                         key="lm_pick_b")
+    with c3:
+        st.write("")
+        if st.button("이 날짜로", width="stretch", key="lm_pick_go"):
+            raw = st.session_state.get("lm_raw")
+            if not raw and CACHE.exists():
+                raw = CACHE.read_bytes()
+            if raw and _load(raw, L.get("filename") or "last.xlsx",
+                             pick_dates=[date.fromisoformat(a), date.fromisoformat(b)]):
+                st.rerun()
+
+
 # ── 화면 ─────────────────────────────────────────────────────────────────
 def render(lock) -> None:
     st.caption("예약 파일을 올리면 Region > Area > Tour 로 나뉩니다. "
                "수량을 넣고, 필요하면 언어·픽업지를 좁히세요.")
+    who_input("lm_who")
 
     c1, c2 = st.columns([3, 2])
     with c1:
@@ -142,6 +228,8 @@ def render(lock) -> None:
     cat = st.session_state.get("lm_catalog") or {}
     st.success(f"{L.get('filename')} · {L.get('rows')}행 · "
                f"{' / '.join(L.get('dates') or [])}", icon="📄")
+    _dropped_note(L)
+    _date_choice(L)
     cc1, cc2 = st.columns([5, 1])
     with cc1:
         if cat.get("exists"):
@@ -163,12 +251,16 @@ def render(lock) -> None:
                 st.error(res.get("error", "수집 실패"))
 
     # 조용히 되살리면 어제 수량으로 여는 사고가 난다. 반드시 눈에 보이게 알린다.
+    _others_note(L)
+
     n = st.session_state.get("lm_restored") or 0
     if n:
         cA, cB = st.columns([5, 1])
-        cA.info(f"직전에 입력한 수량 {n}건을 되살렸습니다. 다르면 [입력값 지우기]", icon="↩️")
+        mine = who() or "이름 없이 작업한 사람"
+        cA.info(f"**{mine}** 이(가) 직전에 입력한 수량 {n}건을 되살렸습니다. "
+                "다르면 [입력값 지우기]", icon="↩️")
         if cB.button("입력값 지우기", width="stretch"):
-            lmentries.clear(L)
+            lmentries.clear(L, who())
             st.session_state["lm_entries"] = {}
             st.session_state["lm_restored"] = 0
             for k in [k for k in st.session_state
@@ -190,7 +282,7 @@ def render(lock) -> None:
                     for row in a["rows"]:
                         _tour_row(pi, row, p["is_latest"])
 
-    lmentries.save(L, st.session_state.get("lm_entries") or {})
+    lmentries.save(L, st.session_state.get("lm_entries") or {}, who())
 
     st.divider()
     _memo_and_open(latest, lock)
