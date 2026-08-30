@@ -25,6 +25,7 @@ import json
 import os
 import socket
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime
@@ -53,9 +54,12 @@ from core.routing import get_routing                    # noqa: E402
 
 CONFIG = paths.DATA_DIR / "agent_config.json"
 AGENT_NAME = ""          # main() 에서 채운다 (기록에 '어느 PC' 를 남기려고)
-POLL_IDLE = 3.0          # 할 일 없을 때 물어보는 간격(초)
+POLL_IDLE = 1.0          # 할 일 없을 때 물어보는 간격(초)
 FLUSH_SEC = 2.0          # 로그를 중계 지점에 보내는 간격
-BEAT_SEC = 10.0          # 살아있다고 알리는 간격
+BEAT_SEC = 5.0           # 살아있다고 알리는 간격
+# ⚠️ 이 두 값이 곧 '누른 뒤 화면이 바뀌기까지' 다.
+#    3초/10초였을 때는 Chrome 을 켜도 최대 10초 동안 '꺼짐' 으로 보여서,
+#    사람이 안 켜진 줄 알고 다시 눌렀다.
 
 
 def default_agent_name() -> str:
@@ -98,6 +102,9 @@ class RemoteJob:
         self._buf_logs: list = []
         self._buf_res: list = []
         self._last = 0.0
+        # 짧은 작업(Chrome 켜기 등)은 중간 보고를 모아 끝에 한 번만 보낸다.
+        # 왕복 한 번이 1초라, 보고 횟수가 그대로 사람이 기다리는 시간이 된다.
+        self.quiet = False
 
     # ── core 가 부르는 것들 ──────────────────────────────────────────────
     def log(self, source: str, line: str) -> None:
@@ -133,6 +140,9 @@ class RemoteJob:
 
     # ── 전송 ────────────────────────────────────────────────────────────
     def _flush(self, force: bool = False) -> None:
+        # (걸린 시간은 아래 Q.append / stop_requested 가 대부분이다)
+        if self.quiet and not force:
+            return
         if not force and (time.time() - self._last) < FLUSH_SEC:
             return
         if not self._buf_logs and not self._buf_res:
@@ -199,6 +209,26 @@ class RemoteJob:
 
 
 # ── 작업 실행 ─────────────────────────────────────────────────────────────
+KEEP_AFTER_DONE = 20.0        # 화면이 결과를 한 번 읽을 시간
+
+
+def _cleanup_later(job_id: str) -> None:
+    """
+    끝난 작업을 잠시 뒤 지운다. 기다리지 않는다.
+
+    ⚠️ 예전에는 여기서 20초를 그냥 기다렸다. 그동안 Agent 는 새 작업을
+       못 받아서, 연달아 누르면 두 번째가 20초 늦게 시작했다.
+       중계 지점은 저장소가 아니라 치우는 건 맞지만, 뒤에서 하면 된다.
+    """
+    def go():
+        time.sleep(KEEP_AFTER_DONE)
+        try:
+            Q.remove(job_id)
+        except Exception:
+            pass
+    threading.Thread(target=go, daemon=True).start()
+
+
 def run_job(agent_name: str, spec: dict) -> None:
     job = RemoteJob(spec["id"], spec.get("kind") or "", spec.get("title") or "")
     p = spec.get("params") or {}
@@ -224,9 +254,16 @@ def run_job(agent_name: str, spec: dict) -> None:
         if not job.finished:
             job.done()
         job.finish_up()
+        # 끝났다고 알린 뒤에 상태를 보낸다. 순서를 바꾸면 사람이 결과를
+        # 1초 늦게 본다 (왕복 한 번이 약 1초다).
+        if kind == "chrome":
+            _beat_now()
 
 
 def _run_chrome(job: RemoteJob, p: dict) -> None:
+    # 몇 초짜리 작업이다. 중간 보고 없이 끝에 한 번만 보낸다.
+    job.quiet = True
+
     """
     Chrome 프로필 실행 / 로그인 확인.
 
@@ -238,8 +275,10 @@ def _run_chrome(job: RemoteJob, p: dict) -> None:
 
     if action == "ensure":
         key = str(p.get("key") or "")
+        _t = time.time()
         job.log("SYS", f"[Chrome] {key} 실행")
         res = r.ensure(key, wait_seconds=float(p.get("wait") or 35))
+        job.log("SYS", f"[Chrome] {key} {time.time()-_t:.1f}초 걸림")
         job.result({"channel": "CHROME", "region": key,
                     "item": "실행",
                     "result": "성공" if res.get("ready") else "실패",
@@ -301,6 +340,43 @@ def _run_open(job: RemoteJob, p: dict) -> None:
         # 각 러너가 job.done() 을 부르므로 다음 러너를 위해 되돌린다
         job.finished = False
     job.done(summary={"channels": [n for n, _ in runners], "dry_run": dry})
+
+
+BUSY = {"on": False}          # 지금 작업을 돌고 있나
+
+
+def _beat_loop(name: str) -> None:
+    """
+    '살아있다' 를 계속 보낸다.
+
+    ⚠️ 주 흐름과 따로 돈다. 작업 실행이 몇 분씩 걸려도 심장박동은 끊기지
+       않는다. 예전에는 작업 도는 동안 화면이 '켜져 있는 PC 가 없습니다' 로
+       보였다 — 오픈처럼 오래 걸리는 작업에서는 언제나 그랬다.
+       (2026-08-27: 작업 신호는 6초 전인데 PC 신호는 585초 전이었다)
+
+    작업 중에는 Chrome 상태까지 훑지 않는다. 봇이 그 Chrome 을 쓰는 중이라
+    옆에서 찔러볼 이유가 없다.
+    """
+    while True:
+        try:
+            Q.heartbeat(name, None if BUSY["on"] else chrome_info())
+        except Exception:
+            pass
+        time.sleep(BEAT_SEC)
+
+
+def _beat_now() -> None:
+    """
+    상태를 지금 바로 보낸다.
+
+    다음 심장박동을 기다리면 화면이 몇 초 동안 옛 상태를 보여준다.
+    Chrome 을 켠 직후가 특히 그렇다 — 켜졌는데 '꺼짐' 으로 보인다.
+    """
+    try:
+        if AGENT_NAME:
+            Q.heartbeat(AGENT_NAME, chrome_info())
+    except Exception:
+        pass
 
 
 def chrome_info() -> dict:
@@ -439,13 +515,12 @@ def main() -> None:
     print("  로그인 정보는 이 PC 를 떠나지 않습니다.")
     print("=" * 66)
 
+    # 심장박동은 따로 돈다. 작업이 오래 걸려도 끊기지 않는다.
+    threading.Thread(target=_beat_loop, args=(name,), daemon=True).start()
+
     warned = False
-    last_beat = 0.0
     while True:
         try:
-            if time.time() - last_beat > BEAT_SEC:
-                Q.heartbeat(name, chrome_info())
-                last_beat = time.time()
             spec = Q.claim(name)
             warned = False
         except Exception as e:
@@ -458,12 +533,13 @@ def main() -> None:
 
         if spec:
             print(f"\n[AGENT] 작업 받음: {spec.get('title')} ({spec.get('id')})")
-            run_job(name, spec)
+            BUSY["on"] = True
+            try:
+                run_job(name, spec)
+            finally:
+                BUSY["on"] = False
             print(f"[AGENT] 완료: {spec.get('id')}\n")
-            # 중계 지점은 저장소가 아니다. 끝난 작업은 잠깐 두었다 지운다.
-            # (화면이 결과를 한 번 읽을 시간)
-            time.sleep(20)
-            Q.remove(spec["id"])
+            _cleanup_later(spec["id"])
         else:
             time.sleep(POLL_IDLE)
 

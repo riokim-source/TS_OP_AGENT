@@ -372,7 +372,33 @@ def find_and_click_sold_out(page: Page, target: date, dry_run: bool, _retry: int
 # ============================================================
 # 4. 드롭다운 필터
 # ============================================================
-TRIGGER_SEL = "[class*='AvailabilityProductFilter__productAndTourGradeFilterTrigger']"
+# 상품 필터를 여는 단추.
+#
+# ⚠️ 해시가 붙은 클래스(...___zt09z)는 Viator 가 배포할 때마다 바뀐다.
+#    그래서 해시를 뺀 조각으로 찾는다. 글자('Select products')로 찾으면
+#    상품을 고른 뒤 글자가 바뀌어 못 찾는다 (실제로 확인함).
+#    앞의 것부터 시도하고, 옛 이름도 남겨 둔다 (계정마다 배포 시점이 다르다).
+TRIGGER_SELECTORS = [
+    ".dropdown__trigger[class*='AvailabilityProductFilter']",
+    "[class*='AvailabilityProductFilter-module__'][class*='Trigger']",
+    "[class*='AvailabilityProductFilter__productAndTourGradeFilterTrigger']",   # 옛 이름
+]
+TRIGGER_SEL = TRIGGER_SELECTORS[0]
+
+
+class ViatorScreenChanged(RuntimeError):
+    """
+    상품 필터를 계속 못 여는 상태.
+
+    이러면 뒤가 전부 무너진다 (Apply 못 찾음 -> 필터 안 걸림 -> 이전 잔상 ->
+    2차검증 실패 -> skip). 상품마다 36초씩 버리며 끝까지 도는 것은 의미가
+    없으므로 일찍 멈추고 사람에게 알린다.
+    (2026-08-30: 94개를 23분간 헛돌았다)
+    """
+
+
+OPEN_FAIL_LIMIT = 3          # 이만큼 연속 실패하면 멈춘다
+_open_fail = {"n": 0}
 
 
 def _is_dropdown_open(page: Page) -> bool:
@@ -385,29 +411,58 @@ def _is_dropdown_open(page: Page) -> bool:
 
 
 def open_product_dropdown(page: Page, max_attempts: int = 3) -> bool:
-    """드롭다운을 확실히 연다. 최대 3번 시도."""
+    """
+    드롭다운을 확실히 연다. 최대 3번 시도.
+
+    여기서 못 열면 그 뒤가 전부 무너진다 — Apply 를 못 찾고, 필터가 안 걸리고,
+    이전 상품의 잔상이 남아 2차검증이 실패해 skip 된다. 그러니 어느 선택자로
+    열렸는지(또는 하나도 안 맞았는지)를 로그에 남긴다.
+    """
     page.evaluate("window.scrollTo(0, 0)")
     for attempt in range(max_attempts):
         if _is_dropdown_open(page):
             return True
-        try:
-            page.locator(TRIGGER_SEL).first.click(timeout=2000, force=True)
-        except Exception:
-            # trigger 못 찾으면 JS 로 클릭 시도
+
+        clicked = ""
+        for sel in TRIGGER_SELECTORS:
+            try:
+                loc = page.locator(sel).first
+                if loc.count() == 0:
+                    continue
+                loc.click(timeout=2000, force=True)
+                clicked = sel
+                break
+            except Exception:
+                continue
+
+        if not clicked:
+            # 어느 선택자에도 안 걸렸다. 화면이 바뀐 것이므로 그렇게 말한다.
             try:
                 page.evaluate(
                     """() => {
-                        const el = document.querySelector(
-                            "[class*='AvailabilityProductFilter__productAndTourGradeFilterTrigger']"
-                        );
+                        const el = document.querySelector('.dropdown__trigger');
                         if (el) el.click();
                     }"""
                 )
+                clicked = ".dropdown__trigger (마지막 수단)"
             except Exception:
                 pass
+
         page.wait_for_timeout(700 + attempt * 300)
         if _is_dropdown_open(page):
+            _open_fail["n"] = 0
+            if attempt > 0 or clicked != TRIGGER_SELECTORS[0]:
+                LOG.info("상품 필터 열림 (%s, %d번째 시도)", clicked or "?", attempt + 1)
             return True
+
+    LOG.error("상품 필터를 열지 못했습니다. Viator 화면 구조가 바뀌었을 수 있습니다. "
+              "찾아본 것: %s", " | ".join(TRIGGER_SELECTORS))
+    _open_fail["n"] += 1
+    if _open_fail["n"] >= OPEN_FAIL_LIMIT:
+        raise ViatorScreenChanged(
+            f"상품 필터를 {_open_fail['n']}번 연속 열지 못했습니다. "
+            "Viator 화면 구조가 바뀐 것으로 보입니다. "
+            "이대로 두면 남은 상품도 전부 같은 이유로 건너뜁니다.")
     return False
 
 

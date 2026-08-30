@@ -243,8 +243,9 @@ def render(lock) -> None:
 
     if st.session_state.get("confirm_direct"):
         zero = [r for r in rows if int(r["수량"] or 0) == 0]
+        where = f"**{agent}** 에서 " if agent else ""
         st.warning(
-            f"**{info['label']}** 에 **{target.isoformat()}** 날짜로 "
+            f"{where}**{info['label']}** 에 **{target.isoformat()}** 날짜로 "
             f"**{len(rows)}건** 을 실제로 엽니다."
             + (f"  이 중 **{len(zero)}건은 수량 0** 이라 마감됩니다." if zero else ""),
             icon="⚠️")

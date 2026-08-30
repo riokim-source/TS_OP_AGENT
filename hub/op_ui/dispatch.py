@@ -108,6 +108,16 @@ def agent_picker(key: str = AGENT_KEY) -> str | None:
     idx = names.index(prev) if prev in names else 0
     picked = st.selectbox("실행할 PC", names, index=idx, key=key,
                           format_func=lambda x: labels.get(x, x))
+
+    # ⚠️ 한 대뿐이면 고를 것이 없어 그냥 지나친다. 다른 PC 에서 돌리려던
+    #    사람은 그 사실을 모른 채 여기서 실행하게 된다.
+    #    (2026-08-26: 팀원 PC 가 중계에 못 붙은 줄 모르고 실행했다)
+    if len(names) == 1:
+        st.caption(f"⚠️ 연결된 PC 가 **{picked}** 한 대뿐입니다. "
+                   f"다른 PC 에서 돌리려면 그 PC 에서 **Agent 켜기.bat** 을 "
+                   f"실행하세요.")
+    else:
+        st.caption(f"이 작업은 **{picked}** 에서 실행됩니다.")
     return picked
 
 
@@ -179,12 +189,16 @@ def chrome_call(action: str, params: dict, agent: str | None = None,
     t0 = time.time()
     last = ""
     while time.time() - t0 < timeout:
-        time.sleep(1.5)
-        d = Q.get(jid) or {}
-        logs = d.get("logs") or []
-        if logs:
-            last = str(logs[-1].get("line") or "")
+        time.sleep(1.0)
+        # ⚠️ 상태만 보는데 로그까지 가져오면 왕복이 2배로 든다(2.3초 vs 1.2초).
+        #    그 시간이 그대로 사람이 기다리는 시간이 된다. 로그는 끝난 뒤 한 번만.
+        d = Q.get(jid, with_logs=False) or {}
         if d.get("status") in ("done", "error"):
+            full = Q.get(jid) or d
+            logs = full.get("logs") or []
+            if logs:
+                last = str(logs[-1].get("line") or "")
+            d = full
             summary = d.get("summary") or {}
             err = d.get("error")
             try:

@@ -247,9 +247,40 @@ def running_banner() -> dict | None:
                 st.rerun()
 
         for d in (Q.active() or []):
-            st.warning(f"실행 중: **{d.get('title')}** ({d.get('agent')}, "
-                       f"{d.get('created', '')} 시작) — 끝나야 다른 작업을 "
-                       f"시작할 수 있습니다.", icon="⏳")
+            # 몇 분 걸리는 작업에서는 '실행 중' 만으로는 멈춘 건지 알 수 없다.
+            # 마지막으로 한 일과 경과 시간을 같이 보여준다.
+            import time as _t
+            beat = float(d.get("beat") or 0)
+            ago = int(_t.time() - beat) if beat else -1
+            head = (f"실행 중: **{d.get('title')}** ({d.get('agent')}, "
+                    f"{d.get('created', '')} 시작)")
+            if ago >= 0:
+                head += f" · 마지막 소식 {ago}초 전"
+            st.warning(head + " — 끝나야 다른 작업을 시작할 수 있습니다.", icon="⏳")
+
+            try:
+                full = Q.get(str(d.get("id") or ""))
+                logs = (full or {}).get("logs") or []
+                res = (full or {}).get("results") or []
+            except Exception:
+                logs, res = [], []
+            if logs:
+                last = logs[-1]
+                st.caption(f"지금: {last.get('t','')} [{last.get('src','')}] "
+                           f"{str(last.get('line',''))[:110]}")
+            if res:
+                bad = [r for r in res
+                       if "성공" not in str(r.get("result", ""))
+                       and "집계" not in str(r.get("result", ""))]
+                st.caption(f"여기까지 {len(res)}건 처리"
+                           + (f" · 실패 {len(bad)}건" if bad else " · 실패 없음"))
+            with st.expander("진행 로그 보기"):
+                if logs:
+                    st.code("\n".join(
+                        f"{l.get('t','')} [{l.get('src','')}] {l.get('line','')}"
+                        for l in logs[-200:]), language=None, height=320)
+                else:
+                    st.caption("아직 로그가 없습니다.")
             return d
         return None
 

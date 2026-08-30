@@ -32,7 +32,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from .paths import DATA_DIR
 
@@ -50,8 +50,23 @@ _seq: dict = {"n": 0}
 
 
 # ── 설정 / 인증 ───────────────────────────────────────────────────────────
+_blob_cache: dict = {"at": 0.0, "v": None}
+
+
 def _secrets_blob() -> dict | None:
-    """Streamlit Cloud 면 st.secrets, 아니면 로컬 파일."""
+    """
+    Streamlit Cloud 면 st.secrets, 아니면 로컬 파일.
+
+    호출마다 파일을 읽고 파싱하면 왕복마다 0.17초가 더 붙는다. 잠깐 캐시한다.
+    """
+    if _blob_cache["v"] is not None and (time.time() - _blob_cache["at"]) < 300:
+        return _blob_cache["v"]
+    v = _read_secrets_blob()
+    _blob_cache.update({"at": time.time(), "v": v})
+    return v
+
+
+def _read_secrets_blob() -> dict | None:
     try:
         import streamlit as st
         blob = st.secrets.get("firebase")          # type: ignore[attr-defined]
@@ -109,7 +124,17 @@ def _access_token() -> str:
         cred = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
         cred.refresh(greq.Request())
         _token["value"] = cred.token
-        _token["exp"] = cred.expiry.timestamp() if cred.expiry else time.time() + 3000
+        # ⚠️ cred.expiry 는 '시간대 없는 UTC' 다. 그대로 .timestamp() 하면
+        #    파이썬이 현지 시간으로 읽어, 한국(UTC+9)에서는 만료가 8시간 전으로
+        #    잡힌다. 그러면 캐시가 한 번도 안 먹고 호출마다 토큰을 새로 받는다.
+        #    (2026-08-26 실측: 왕복 1.68초 중 1.19초가 이 재발급이었다)
+        exp = cred.expiry
+        if exp is not None:
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            _token["exp"] = exp.timestamp()
+        else:
+            _token["exp"] = time.time() + 3000
         return _token["value"]
 
 
@@ -139,8 +164,18 @@ def _call(method: str, path: str, body=None, params: dict | None = None,
         raise
 
 
+KST = timezone(timedelta(hours=9))
+
+
 def _now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    """
+    중계에 남기는 시각. 언제나 한국 기준이다.
+
+    ⚠️ 화면은 Streamlit Cloud(UTC)에서 돌기 때문에 그냥 now() 를 쓰면
+       오전 10:34 에 시작한 작업이 '01:34 시작' 으로 남는다.
+       (2026-08-27: 실제로 그렇게 보여서 언제 것인지 알 수 없었다)
+    """
+    return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def safe_name(agent: str) -> str:
@@ -183,13 +218,20 @@ def agents() -> list[dict]:
 def create(kind: str, agent: str, title: str, params: dict,
            created_by: str = "") -> dict:
     job = {
-        "id": datetime.now().strftime("%Y%m%d_%H%M%S_") + _secrets.token_hex(3),
+        # 작업 id 도 한국 시각으로 만든다. 기록이 시간순으로 정렬되는 근거다.
+        "id": datetime.now(KST).strftime("%Y%m%d_%H%M%S_") + _secrets.token_hex(3),
         "kind": kind, "agent": agent, "title": title, "params": params,
         "created": _now(), "created_by": created_by or "",
         "status": "pending", "summary": None, "error": None,
         "claimed_at": None, "finished_at": None, "beat": time.time(),
     }
     _call("PUT", f"jobs/{job['id']}", job)
+    # 대기표에도 올린다. Agent 는 이것만 읽고 자기 일이 있는지 안다.
+    # 이게 없으면 작업 목록을 통째로 훑어야 해서 폴링마다 3초씩 든다.
+    try:
+        _call("PUT", f"queue/{safe_name(agent)}/{job['id']}", True)
+    except Exception:
+        pass          # 대기표가 없어도 아래 '가끔 훑기' 가 잡아 준다
     return {**job, "logs": [], "results": []}
 
 
@@ -232,35 +274,97 @@ def get(job_id: str, with_logs: bool = True, since: str | None = None) -> dict |
     return d
 
 
+_scan_count = {"n": 0}
+FULL_SCAN_EVERY = 20          # 대기표가 비어도 가끔은 예전 방식으로 훑는다
+
+
+_stop_cache: dict = {"at": 0.0, "id": None, "val": False}
+STOP_CHECK_SEC = 8.0
+
+
+def _take(jid: str, agent: str, known_mine: bool = False) -> dict | None:
+    """
+    작업 하나를 실제로 가져간다 (ETag 비교 교환).
+
+    두 Agent 가 같은 작업을 동시에 집어도 한 명만 성공한다
+    (412 가 오면 남이 먼저 가져간 것).
+
+    ⚠️ 왕복 한 번이 약 1초다. 여기서 한 번 줄이면 사람이 기다리는 시간이
+       그만큼 준다. 그래서 꼭 필요한 것만 부른다.
+         - 대기표에서 왔으면 이미 '내 것' 이므로 주인을 다시 묻지 않는다.
+         - claimed_at 은 따로 쓰지 않는다. 첫 진행 보고가 beat 를 갱신한다.
+         - 새 작업에는 로그가 없으므로 로그까지 가져오지 않는다.
+    """
+    try:
+        cur, tag = _call("GET", f"jobs/{jid}/status", etag=True)
+    except Exception:
+        return None
+    if cur != "pending":
+        return None
+    if not known_mine:
+        try:
+            if _call("GET", f"jobs/{jid}/agent") != agent:
+                return None
+        except Exception:
+            return None
+    got, _ = _call("PUT", f"jobs/{jid}/status", "running", etag=True, if_match=tag)
+    if got != "running":
+        return None
+    # 방금 집은 작업에 중단 요청이 있을 리 없다. 첫 확인 왕복(1초)을 아낀다.
+    _stop_cache.update({"at": time.time(), "id": jid, "val": False})
+    d = get(jid, with_logs=False)
+    if d is not None:
+        d.setdefault("logs", [])
+        d.setdefault("results", [])
+    return d
+
+
+def _drop_ticket(agent: str, jid: str) -> None:
+    """
+    대기표를 지운다. 결과를 기다리지 않는다 —
+    이걸 기다리면 사람이 1초를 더 기다린다.
+    """
+    def go():
+        try:
+            _call("DELETE", f"queue/{safe_name(agent)}/{jid}")
+        except Exception:
+            pass
+    threading.Thread(target=go, daemon=True).start()
+
+
 def claim(agent: str) -> dict | None:
     """
     이 Agent 앞으로 온 대기 작업 하나를 가져간다.
 
-    ETag 비교 교환으로 잡는다. 두 Agent 가 같은 작업을 동시에 집어도
-    한 명만 성공한다 (412 가 오면 남이 먼저 가져간 것).
+    할 일이 없을 때가 대부분이므로 그 경우를 가장 싸게 만든다 —
+    대기표 하나만 읽고 끝낸다(왕복 1번). 예전에는 작업마다 2~3번씩 물어봐서
+    폴링 한 번에 3.4초가 들었고, 그게 그대로 사람이 기다리는 시간이 됐다.
     """
+    # (1) 대기표
+    try:
+        tickets = _call("GET", f"queue/{safe_name(agent)}") or {}
+    except Exception:
+        tickets = {}
+    for jid in sorted(tickets if isinstance(tickets, dict) else {}):
+        got = _take(jid, agent, known_mine=True)
+        _drop_ticket(agent, jid)      # 뒤에서 조용히 지운다 (기다리지 않는다)
+        if got:
+            return got
+
+    # (2) 가끔은 예전 방식으로도 훑는다.
+    #     옛 화면이 만든 작업에는 대기표가 없다. 섞여 돌 때 그것들이
+    #     영영 안 잡히면 사람은 '눌렀는데 아무 일도 안 난다' 만 겪는다.
+    _scan_count["n"] += 1
+    if _scan_count["n"] % FULL_SCAN_EVERY != 0:
+        return None
     try:
         jobs = _call("GET", "jobs", params={"shallow": "true"}) or {}
     except Exception:
         return None
     for jid in sorted(jobs if isinstance(jobs, dict) else {}):
-        try:
-            cur, tag = _call("GET", f"jobs/{jid}/status", etag=True)
-        except Exception:
-            continue
-        if cur != "pending":
-            continue
-        try:
-            who = _call("GET", f"jobs/{jid}/agent")
-        except Exception:
-            continue
-        if who != agent:
-            continue
-        got, _ = _call("PUT", f"jobs/{jid}/status", "running", etag=True, if_match=tag)
-        if got != "running":
-            continue        # 남이 먼저 가져갔다
-        _call("PATCH", f"jobs/{jid}", {"claimed_at": _now(), "beat": time.time()})
-        return get(jid)
+        got = _take(jid, agent)
+        if got:
+            return got
     return None
 
 
@@ -315,12 +419,22 @@ def finish(job_id: str, summary: dict | None = None, error: str | None = None) -
         return False
 
 
+def _clear_tickets(job_id: str) -> None:
+    """작업이 사라지면 대기표도 지운다 (남으면 매번 헛걸음한다)."""
+    try:
+        for who in (_call("GET", "queue", params={"shallow": "true"}) or {}):
+            _call("DELETE", f"queue/{who}/{job_id}")
+    except Exception:
+        pass
+
+
 def remove(job_id: str) -> None:
     """중계 지점에서 지운다. 영구 기록은 실행한 PC 에 남는다."""
     try:
         _call("DELETE", f"jobs/{job_id}")
     except Exception:
         pass
+    _clear_tickets(job_id)
 
 
 def cancel(job_id: str, reason: str = "사용자 중단") -> bool:
@@ -338,8 +452,7 @@ def request_stop(job_id: str) -> bool:
         return False
 
 
-_stop_cache: dict = {"at": 0.0, "id": None, "val": False}
-STOP_CHECK_SEC = 8.0
+
 
 
 def stop_requested(job_id: str) -> bool:
