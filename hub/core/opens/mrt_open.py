@@ -59,6 +59,7 @@ def resolve(plan: list[dict]) -> dict:
     pm = get_map()
     items: dict[str, dict] = {}
     unmapped: list[dict] = []
+    notes: list[str] = []          # '오픈은 이것만' 처럼 사람이 알아야 할 것
     # 수량 0 = 마감. 아래에서 걸러내지 않고 그대로 내려보낸다.
 
     for p in plan:
@@ -77,7 +78,19 @@ def resolve(plan: list[dict]) -> dict:
             continue
 
         course = course_of(tour)
-        for pid in entry["ids"]:
+
+        # ⚠️ '마감은 둘 다, 오픈은 하나만' 인 상품이 있다.
+        #    같은 투어가 MRT 에 번호 두 개로 올라가 있으면, 마감은 둘 다 해야
+        #    하지만(어느 쪽으로도 예약이 들어온다) 오픈은 한 쪽만 해야 한다.
+        #    둘 다 열면 같은 자리를 두 번 파는 셈이다.
+        #    (2026-08-30: Mt. Fuji Signature 3887808 / 4600233)
+        open_ids = entry.get("open_ids") or entry["ids"]
+        if entry.get("open_ids") and len(open_ids) != len(entry["ids"]):
+            skipped = [i for i in entry["ids"] if i not in open_ids]
+            notes.append(f"{tour}: 오픈은 {', '.join(open_ids)} 만 "
+                         f"(마감 전용 {', '.join(skipped)} 는 열지 않음)")
+
+        for pid in open_ids:
             if course is None and is_multi_course(pid):
                 unmapped.append({
                     "tour": tour, "qty": qty,
@@ -94,7 +107,7 @@ def resolve(plan: list[dict]) -> dict:
             if tour not in cur["tours"]:
                 cur["tours"].append(tour)
 
-    return {"items": list(items.values()), "unmapped": unmapped}
+    return {"items": list(items.values()), "unmapped": unmapped, "notes": notes}
 
 
 def preview(plan: list[dict]) -> dict:
@@ -115,6 +128,9 @@ def run(job, plan: list[dict], target_date: str | None, dry_run: bool = False) -
         job.result({"channel": "MRT", "item": f"{u['tour']} {u['qty']}",
                     "result": "매핑 없음", "memo": u["reason"]})
         job.log("SYS", f"[MRT] 매핑 없음: {u['tour']} — {u['reason']}")
+
+    for n in res.get("notes") or []:
+        job.log("SYS", f"[MRT] {n}")
 
     items = res["items"]
     if not items:
