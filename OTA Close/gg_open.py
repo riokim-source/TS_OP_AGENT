@@ -373,6 +373,23 @@ def collect_one(page, testid: str) -> dict | None:
         return None
 
 
+def _closest(want: str, names: list, top: int = 5) -> list:
+    """
+    이름이 어긋났을 때 '이걸 말한 건가' 를 보여준다.
+
+    글자 겹침으로 대충 고른다. 정확할 필요는 없다 — 사람이 보고 판단한다.
+    """
+    import difflib
+    w = _norm(want)
+    scored = []
+    for n in names:
+        r = difflib.SequenceMatcher(None, w, _norm(n)).ratio()
+        if r >= 0.35:
+            scored.append((r, n))
+    scored.sort(reverse=True)
+    return [n for _r, n in scored[:top]]
+
+
 def match_targets(cards: list[dict], items: list[dict]) -> tuple[list[tuple], list[dict]]:
     """(카드, 수량, 요청) 매칭 목록과 못 찾은 요청을 돌려준다."""
     pairs, missed = [], []
@@ -396,7 +413,26 @@ def match_targets(cards: list[dict], items: list[dict]) -> tuple[list[tuple], li
             for c in hits:
                 pairs.append((c, qty, it))
         else:
-            missed.append({**it, "reason": "해당 옵션을 화면에서 찾지 못함"})
+            # 왜 못 찾았는지 알 수 있게 화면에 있던 이름을 함께 남긴다.
+            #
+            # GG 는 맵핑표 없이 화면 이름으로 찾는다. GG 쪽 상품명이 우리
+            # 투어명과 다르면 조용히 빠지는데, 예전에는 '못 찾음' 만 남아서
+            # 원인을 알 수 없었다. 로그인이 필요한 화면이라 나중에 열어볼
+            # 수도 없다. (2026-08-30: JAPAN Mt. Fuji Signature)
+            heads = []
+            for c in cards:
+                h, _pk = parse_title(c["title"])
+                if h and h not in heads:
+                    heads.append(h)
+            near = _closest(tour, heads, 5)
+            reason = "해당 옵션을 화면에서 찾지 못함"
+            if near:
+                reason += " | 비슷한 이름: " + ", ".join(near)
+            if heads:
+                reason += f" | 화면 옵션 {len(heads)}종: " + ", ".join(heads[:12])
+            LOG.warning("[%s] 못 찾음 — 화면에 있던 이름 %d종: %s",
+                        tour, len(heads), ", ".join(heads[:15]))
+            missed.append({**it, "reason": reason[:600]})
     return pairs, missed
 
 
