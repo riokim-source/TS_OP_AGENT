@@ -233,11 +233,14 @@ def render(lock) -> None:
     cc1, cc2 = st.columns([5, 1])
     with cc1:
         if cat.get("exists"):
-            st.caption(f"픽업 후보 = 예약에 나온 픽업지 + GG 가 파는 픽업지 "
-                       f"(GG 기준 {cat.get('tours')}개 투어 · {cat.get('date') or '-'}). "
-                       f"예약이 없는 픽업지도 골라야 '홍대 제외' 같은 지시를 만들 수 있습니다.")
+            st.caption(
+                f"픽업 후보 = 예약에 나온 것 + GG 가 파는 것 + 같은 지역에서 쓰는 것 "
+                f"(GG 기준 {cat.get('tours')}개 투어 · {cat.get('date') or '-'} 수집). "
+                "`?` 표시는 GG 에서 확인 안 된 것입니다. 목록에 없으면 칸에 직접 "
+                "적으면 됩니다. 예약이 없는 픽업지도 골라야 '홍대 제외' 가 됩니다.")
         else:
-            st.warning("GG 픽업 목록이 없습니다. 예약에 나온 픽업지만 고를 수 있습니다.", icon="⚠️")
+            st.warning("GG 픽업 목록이 없습니다. 예약에 나온 것과 같은 지역에서 "
+                       "쓰는 픽업지만 보입니다. 없으면 칸에 직접 적으세요.", icon="⚠️")
     with cc2:
         if st.button("픽업 새로고침", width="stretch",
                      help="GG 에서 투어별 픽업지를 다시 수집합니다. 1~2분 걸립니다."):
@@ -299,17 +302,30 @@ def _tour_row(pi: int, row: dict, is_latest: bool) -> None:
         e["qty"] = c[1].number_input("수량", min_value=0, max_value=999, step=1,
                                      value=int(e["qty"]), key=f"q-{k}",
                                      label_visibility="collapsed")
+        # ⚠️ 예약에 없는 언어·픽업지도 반드시 고를 수 있어야 한다.
+        #    '중국어 불가' 나 '홍대 제외' 는 그 언어·픽업지의 예약이 **없을 때**
+        #    하는 지시다. 예약을 기준으로 후보를 만들면 정작 필요한 순간에
+        #    목록에 없어서 뺄 수가 없고, 그대로 '전체' 로 나가 열려 버린다.
+        #    (2026-08-31: Seasonal BTS 홍대가 목록에 없어 못 뺐고 2자리가 열렸다)
+        #    그래도 없는 이름은 직접 적을 수 있게 열어 둔다.
         langs = row.get("languages") or []
         if langs:
             e["lang"] = c[2].multiselect(
                 "언어", langs, default=e["lang"], key=f"l-{k}",
                 format_func=lambda x: LANG_LABEL.get(x, x),
-                label_visibility="collapsed", placeholder="언어")
+                label_visibility="collapsed", placeholder="언어",
+                accept_new_options=True)
         picks = row.get("pickups") or []
+        known = set(row.get("pickups_known") or [])
         if picks:
             e["pick"] = c[3].multiselect(
                 "픽업", picks, default=e["pick"], key=f"p-{k}",
-                label_visibility="collapsed", placeholder="픽업지")
+                # GG 에서 확인된 것과 '같은 지역이라 아마 있을 것' 을 구분한다.
+                # 없는 픽업지를 골라도 수량이 사라지진 않는다 — gg_open 은
+                # 화면에서 실제로 찾은 옵션 개수로 나눈다.
+                format_func=lambda x: x if (not known or x in known) else f"{x} ?",
+                label_visibility="collapsed", placeholder="픽업지",
+                accept_new_options=True)
     else:
         cols = st.columns([4] + [1] * len(C.CHANNELS))
         cols[0].write(label)

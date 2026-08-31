@@ -75,18 +75,39 @@ def info() -> dict:
         return {"exists": False, "date": None, "tours": 0}
 
 
-def merge(tour: str, sheet_pickups: list[str], catalog: dict | None = None) -> list[str]:
+def merge(tour: str, sheet_pickups: list[str], catalog: dict | None = None,
+          extra: list[str] | None = None) -> list[str]:
     """
-    화면 드롭다운에 띄울 픽업 후보 = 예약 파일에 나온 것 U GG 가 파는 것.
+    화면 드롭다운에 띄울 픽업 후보.
 
-    예약이 없어도 '파는 픽업지' 는 고를 수 있어야 '홍대 제외' 같은 지시가 나온다.
+        예약 파일에 나온 것  U  GG 가 파는 것  U  같은 지역에서 쓰는 것
+
+    ⚠️ 예약이 없는 픽업지도 반드시 고를 수 있어야 한다.
+       '홍대 제외' 는 **홍대 예약이 없을 때** 하는 지시다. 예약을 기준으로
+       후보를 만들면 정작 필요한 순간에 홍대가 목록에 없어서 뺄 수가 없고,
+       결국 '모든 픽업' 으로 나가 홍대까지 열린다.
+       (2026-08-31: Seasonal BTS 가 명동·동대문 예약만 있어 홍대를 못 뺐고,
+        실제로 홍대에 2자리가 열렸다. GG 카탈로그에도 그 투어가 없었다)
+
+    GG 카탈로그는 사람이 새로고침해야 채워지고 투어가 빠져 있을 수 있다.
+    그래서 같은 지역의 다른 투어에서 쓰는 픽업지(extra)까지 후보로 넣는다.
+
+    없는 픽업지를 골라도 수량이 사라지지는 않는다 — gg_open 은 화면에서
+    실제로 찾은 옵션 개수로 수량을 나눈다.
     """
     cat = load() if catalog is None else catalog
     out = list(sheet_pickups or [])
-    for p in cat.get(_norm(tour), []):
-        if p not in out:
-            out.append(p)
+    for group in (cat.get(_norm(tour), []), extra or []):
+        for p in group:
+            if p and p not in out:
+                out.append(p)
     return sorted(out)
+
+
+def known_for(tour: str, catalog: dict | None = None) -> list[str]:
+    """GG 카탈로그에서 '이 투어가 실제로 파는' 픽업지 (확인된 것만)."""
+    cat = load() if catalog is None else catalog
+    return list(cat.get(_norm(tour), []))
 
 
 def refresh(date_str: str, region: str = "KOREA") -> dict:

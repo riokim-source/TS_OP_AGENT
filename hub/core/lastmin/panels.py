@@ -41,6 +41,8 @@ def build_panels(raw: bytes, filename: str,
     dates = sorted(dates, reverse=True)
 
     pk_cat = lmpickups.load()
+    # 예약이 없는 픽업지도 고를 수 있게, 같은 지역에서 쓰는 것까지 후보에 넣는다
+    pk_pool = lmloader.pickup_pool_by_area(df)
     panels = []
     for idx, d in enumerate(dates):
         # 전일 패널만 'Last Min 10시 후 예약' 을 자동 집계한다
@@ -56,7 +58,11 @@ def build_panels(raw: bytes, filename: str,
                     row["languages"] = available_languages(base, row["languages"])
                     # 픽업 후보 = 예약에 나온 픽업지 U GG 가 파는 픽업지
                     #   예약이 없는 픽업지도 골라야 '홍대 제외' 같은 지시가 나온다
-                    row["pickups"] = lmpickups.merge(row["product"], row["pickups"], pk_cat)
+                    row["pickups"] = lmpickups.merge(
+                        row["product"], row["pickups"], pk_cat,
+                        extra=pk_pool.get(row.get("area") or "", []))
+                    # 'GG 가 판다고 확인된 것' 을 따로 알려 준다 (나머지는 추정)
+                    row["pickups_known"] = lmpickups.known_for(row["product"], pk_cat)
                     row["display"] = base
         panels.append({
             "date": d.isoformat(),

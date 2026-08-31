@@ -63,17 +63,25 @@ def klook_language_variants(base: str) -> dict[str, str]:
 
 def available_languages(base: str, sheet_languages: list[str]) -> list[str]:
     """
-    화면 드롭다운에 띄울 언어 후보 = 시트에서 실제로 들어온 언어 U Klook 변형 언어.
+    화면 드롭다운에 띄울 언어 후보.
 
-    시트만 보면 'Mt. Fuji Signature 는 중국어 예약이 없었으니 중국어 선택 불가' 가 되어
-    "(중국어 불가)" 같은 지시를 만들 수 없다. Klook 이 파는 언어도 후보에 넣는다.
+    ⚠️ 예약에 없는 언어도 반드시 고를 수 있어야 한다.
+       '중국어 불가' 같은 지시는 **중국어 예약이 없을 때** 하는 것이다.
+       예약을 기준으로 후보를 만들면, 정작 필요한 순간에 그 언어가 목록에
+       없어서 제한을 걸 수 없다. 그러면 OTA 에 직접 들어가 손으로 막아야 한다.
+       (2026-08-31: 예약에 없는 언어가 목록에서 빠져 지시를 못 만들었다)
+
+    언어는 종류가 정해져 있으므로 넷을 항상 보여준다. 시트나 Klook 에서
+    그 밖의 값이 나오면 뒤에 덧붙인다.
+
+    후보를 늘려도 기본값은 '전부 선택' 이라 제한이 걸리지 않는다
+    (language_restricted() 는 일부만 골랐을 때만 참). 사람이 빼야 제한이 된다.
     """
+    order = ["english", "korean", "chinese", "japanese"]
     got = {str(x).strip().casefold() for x in sheet_languages if str(x).strip()}
     got.update(klook_language_variants(base).keys())
-    order = ["english", "korean", "chinese", "japanese"]
-    known = [l for l in order if l in got]
     extra = sorted(x for x in got if x not in order)
-    return known + extra
+    return list(order) + extra
 
 
 # ──────────────────────────────────────────────────────────────────────────────

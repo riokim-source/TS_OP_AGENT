@@ -120,6 +120,21 @@ def _scan_problems(df: pd.DataFrame, raw_people, raw_date) -> list[dict]:
     return out
 
 
+def pickup_pool_by_area(df: pd.DataFrame) -> dict:
+    """
+    지역별로, 파일 전체에서 쓰인 픽업지 모음.
+
+    같은 지역 투어들은 대체로 같은 픽업지를 쓴다(서울=홍대·명동·동대문).
+    그 투어에 예약이 없어 픽업지가 안 보일 때 후보로 쓴다.
+    """
+    out: dict[str, list[str]] = {}
+    for area, g in df.groupby("Area", dropna=True):
+        vals = _clean(g["Pickup"])
+        if vals:
+            out[str(area)] = vals
+    return out
+
+
 def all_dates(df: pd.DataFrame) -> list[date]:
     """파일에 들어 있는 모든 투어일자 (나중 것 먼저)."""
     return sorted(df["TourDate"].dropna().unique(), reverse=True)
