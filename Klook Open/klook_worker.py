@@ -2479,9 +2479,35 @@ def confirm_popup(page):
             '(button.button.ant-btn-primary 가 없음 — Edit schedule 팝업이 안 떠있거나 셀렉터 변경)'
         )
 
+    def vanished(selector, label) -> bool:
+        """
+        '눌렀는데 실패' 인지 '눌러져서 사라진' 것인지 가른다.
+
+        ⚠️ Ant Design 모달은 클릭이 먹은 순간 닫힌다. 그러면 다음 재시도에서
+           버튼을 못 찾아 click_button 이 False 를 돌려주는데, 실제로는 저장이
+           된 것이다. 그걸 안 가르면 이미 열린 상품을 '실패' 로 보고한다.
+
+           2026-08-31: MBC 스튜디오 5 / 에버 15 가 이렇게 실패로 남았다.
+             [오류] 1차 Edit schedule Confirm 클릭 실패: 버튼이 보이지 않음
+           나중에 직접 오픈으로 다시 돌려 보니 둘 다 이미 열려 있었다.
+           사람은 안 열린 줄 알고 다시 돌리게 된다.
+
+        버튼이 처음부터 없었던 경우와는 다르다. 위에서 is_visible 로 이미
+        확인하고 들어왔으므로, 여기 오는 것은 '있는 걸 보고 눌렀는데 사라진'
+        경우뿐이다. 그래서 '거짓 성공 방지' 는 그대로 유지된다.
+
+        여기서 성공으로 단정하지도 않는다 — 뒤의 Note 팝업 확인과
+        모달 재확인이 그대로 돌아간다.
+        """
+        if is_visible(selector):
+            return False
+        print(f'[안내] {label} 이 사라졌습니다 — 클릭이 먹은 것으로 보고 계속합니다')
+        return True
+
     _v('[진행] 1차 Edit schedule Confirm 클릭 시도')
     if not click_button(first_confirm_selector, '1차 Edit schedule Confirm'):
-        raise Exception('1차 Edit schedule Confirm 버튼 클릭 실패')
+        if not vanished(first_confirm_selector, '1차 Edit schedule Confirm'):
+            raise Exception('1차 Edit schedule Confirm 버튼 클릭 실패')
 
  # 1차 Confirm 버튼이 사라질 때까지 대기 (= Edit schedule 모달 닫힘)
     if not wait_for_hidden(first_confirm_selector, '1차 Confirm 버튼', timeout_ms=5000):
@@ -2499,7 +2525,9 @@ def confirm_popup(page):
     if note_appeared:
         _v('[진행] Note 팝업 발견 → 2차 Confirm 클릭')
         if not click_button(note_confirm_selector, '2차 Note Confirm'):
-            raise Exception('Note 팝업 2차 Confirm 클릭 실패')
+            # 여기도 같다 — 눌러져서 사라진 것을 실패로 보면 안 된다
+            if not vanished(note_confirm_selector, '2차 Note Confirm'):
+                raise Exception('Note 팝업 2차 Confirm 클릭 실패')
         if not wait_for_hidden(note_confirm_selector, '2차 Confirm 버튼', timeout_ms=8000):
             raise Exception('Note 팝업 Confirm 클릭 후에도 버튼이 안 사라짐')
  #: 2차 Confirm 버튼이 사라졌으면 저장 완료. 1차 selector 재검사 안 함.
