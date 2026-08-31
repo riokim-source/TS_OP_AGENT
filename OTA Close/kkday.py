@@ -565,6 +565,11 @@ def discover_packages(page: Page) -> List[PackagePage]:
     return results
 
 
+# productlist 를 훑었을 때 실제로 없던 화이트리스트 코드.
+# 워커가 나눠 도니까 '내가 처리한 게 0건' 은 미발견의 근거가 못 된다.
+_PRODUCTLIST_MISSING: Set[str] = set()
+
+
 def filter_by_target_codes(packages: List[PackagePage], target_codes: Set[str]) -> List[PackagePage]:
     if not target_codes:
         LOG.info("화이트리스트 비어 있음 → 발견된 전체 처리")
@@ -573,6 +578,13 @@ def filter_by_target_codes(packages: List[PackagePage], target_codes: Set[str]) 
     LOG.info("화이트리스트 적용: %d → %d", len(packages), len(filtered))
     found_codes = {p.product_no for p in packages}
     missing = target_codes - found_codes
+    # ⚠️ '못 찾았다' 는 productlist 를 훑은 여기서만 판단할 수 있다.
+    #    나중에 결과를 정리할 때 '내가 처리한 게 0건' 으로 판단하면,
+    #    워커 4개가 나눠 도는 구조상 남이 맡은 상품을 매일 '미발견' 으로
+    #    신고하게 된다. (2026-08-31: 6개 상품이 전부 어딘가에서 처리됐는데
+    #    워커마다 2~4개씩 '등록 해제됐거나 권한 변경?' 을 띄웠다)
+    _PRODUCTLIST_MISSING.clear()
+    _PRODUCTLIST_MISSING.update(missing)
     if missing:
         LOG.warning("화이트리스트에 있지만 productlist 에서 못 찾은 코드: %s", sorted(missing))
     return filtered
@@ -1172,10 +1184,17 @@ def render_summary_table(
             lines.append(f"      URL: {pr.url}")
 
     # 화이트리스트인데 packages 0인 코드도 명시
-    missing_codes = [c for c in target_codes if summary.get(c, {}).get("total", 0) == 0]
+    # 이 워커가 안 맡았을 뿐인 것과, 화면에 정말 없던 것을 가른다.
+    not_mine = [c for c in target_codes
+                if summary.get(c, {}).get("total", 0) == 0
+                and c not in _PRODUCTLIST_MISSING]
+    missing_codes = sorted(_PRODUCTLIST_MISSING & set(target_codes))
+    if not_mine:
+        lines.append("")
+        lines.append(f"[다른 워커 담당] {sorted(not_mine)}  (화면에는 있었음)")
     if missing_codes:
         lines.append("")
-        lines.append(f"[화이트리스트 미발견] {sorted(missing_codes)}")
+        lines.append(f"[화이트리스트 미발견] {missing_codes}")
         lines.append("  → productlist 에서 Manage date or session 링크를 못 찾았습니다.")
         lines.append("  → 상품이 비활성화됐거나 권한이 변경됐을 수 있어요.")
 
@@ -1595,9 +1614,11 @@ def run_close(target_date: Optional[date] = None, dry_run: bool = False) -> Resu
                         f"[{pr.product_no}/{pr.package_id}/{pr.package_option_id}] "
                         f"{pr.status.value}: {pr.detail[:80]} | {pr.url}"
                     )
-    missing = [c for c in target_codes if summary.get(c, {}).get("total", 0) == 0]
+    # ⚠️ 여기서 '내가 처리한 게 0건' 을 오류로 올리면, 워커가 나눠 도는
+    #    구조상 매일 거짓 경보가 뜬다. 화면에 정말 없던 것만 올린다.
+    missing = sorted(_PRODUCTLIST_MISSING & set(target_codes))
     if missing:
-        errors_list.append(f"화이트리스트 미발견: {sorted(missing)}")
+        errors_list.append(f"화이트리스트 미발견: {missing}")
 
     return Result(
         agency="KKDAY",

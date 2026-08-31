@@ -504,6 +504,17 @@ def apply_filter(page: Page) -> bool:
         page.wait_for_timeout(400)
         return True
     except Exception as e:
+        # ⚠️ 먼저 '눌려서 닫힌 것' 인지 본다.
+        #    Apply 를 누르면 드롭다운이 닫힌다. 그 순간 Playwright 의 클릭이
+        #    타임아웃으로 끝나는 일이 있는데(요소가 사라져 안정성 재확인 실패),
+        #    그때 아래 fallback 은 이미 닫힌 드롭다운에서 Apply 를 찾다가
+        #    'element is not visible' 로 또 실패한다. 결국 눌렸는데도
+        #    실패로 돌아간다.
+        #    (2026-08-31: 이 경로가 q1~q4 에서 5번 났다)
+        if _dropdown_closed(page):
+            LOG.info("Apply 클릭 중 드롭다운이 닫힘 — 적용된 것으로 봅니다 (%s)",
+                     str(e).splitlines()[0][:70])
+            return True
         LOG.warning("dropdown--active 안 Apply 못 찾음: %s - role 기반 fallback", e)
         # 2차: role 기반 (기존 방식)
         try:
@@ -511,8 +522,19 @@ def apply_filter(page: Page) -> bool:
             page.wait_for_timeout(300)
             return True
         except Exception as e2:
+            if _dropdown_closed(page):
+                LOG.info("fallback 중 드롭다운이 닫힘 — 적용된 것으로 봅니다")
+                return True
             LOG.error("Apply 클릭 최종 실패: %s", e2)
             return False
+
+
+def _dropdown_closed(page: Page) -> bool:
+    """드롭다운이 닫혔나 (= Apply 가 먹었나)."""
+    try:
+        return page.locator(".dropdown--active").count() == 0
+    except Exception:
+        return False
 
 
 def check_select_all(page: Page) -> bool:
@@ -643,7 +665,15 @@ def _process_one_product(page: Page, target: date, dry_run: bool, p: dict, max_w
         clear_all_filter(page)
         if not check_one_product(page, code):
             return {"status": "skip", "reason": "checkbox_missing", "result": ""}
-        apply_filter(page)
+        # ⚠️ Apply 가 먹었는지 반드시 본다.
+        #    안 먹으면 화면에는 '이전 상품' 의 필터가 그대로 남는다. 그 화면을
+        #    이 상품의 것으로 읽으면 엉뚱한 판단을 한다. 실제로 bulk 가
+        #    '이미 마감' 처럼 보여서 2차검증이 '섹션에 이 상품 없음' 으로
+        #    잡아내야 했다 (2026-08-31: 4건이 이렇게 실패로 끝났다).
+        #    같은 함수를 부르는 다른 두 곳은 이미 결과를 보고 있었다.
+        if not apply_filter(page):
+            LOG.warning("[%s] Apply 실패 — 이전 필터가 남아 있어 판단할 수 없다", code)
+            return {"status": "skip", "reason": "apply_failed", "result": ""}
         info = wait_for_target_section(page, target, max_wait_s=max_wait_s)
         if not info["has_target"]:
             return {"status": "skip", "reason": info.get("reason", "?"),
@@ -1011,7 +1041,21 @@ def run_close_workers(target_date: Optional[date], dry_run: bool,
 
             if retry_page:
                 recovered = 0
+                # ⚠️ 재시도는 본 작업보다 더 오래 기다린다(8초 -> 15초).
+                #    느리게 뜨는 화면을 잡는 게 목적이라 짧게 줄이면 의미가 없다.
+                #    대신 '진짜 이상한 것' 을 먼저 본다. 중간에 끊겨도 중요한
+                #    것은 끝나 있게.
+                _PRIO = {"opts_incomplete": 0, "?": 1, "timeout_with_target": 1,
+                         "no_slots": 2, "no_section": 3}
+                retry_targets.sort(key=lambda t: _PRIO.get(t[2], 1))
+                # 사유별로 몇 개 돌려 몇 개 건졌는지 남긴다.
+                # 며칠 쌓이면 '이 사유는 재시도해도 소용없다' 를 근거로 말할 수 있다.
+                # (2026-08-31: 59개 돌려 1개 회복. 근거 없이 빼면 열린 재고를
+                #  놓칠 수 있어 그대로 두고 기록만 남긴다)
+                _tried: dict = {}
+                _saved: dict = {}
                 for ri, (orig_idx, p, prev_reason) in enumerate(retry_targets, 1):
+                    _tried[prev_reason] = _tried.get(prev_reason, 0) + 1
                     res = _process_one_product(retry_page, target, dry_run, p, max_wait_s=15.0)
                     _label_short = (p.get("label") or "")[:50]
                     if res["status"] == "success":
@@ -1019,6 +1063,7 @@ def run_close_workers(target_date: Optional[date], dry_run: bool,
                         if prev_reason in ("no_section", "no_slots", "timeout_with_target", "opts_incomplete", "?"):
                             skipped = max(0, skipped - 1)
                         recovered += 1
+                        _saved[prev_reason] = _saved.get(prev_reason, 0) + 1
                         LOG.info("[q%s] (재시도 %d/%d) %s | %s | 회복 → %s",
                                  quarter, ri, len(retry_targets), p["code"], _label_short,
                                  res["result"])
@@ -1027,6 +1072,7 @@ def run_close_workers(target_date: Optional[date], dry_run: bool,
                         if prev_reason in ("no_section", "no_slots", "timeout_with_target", "opts_incomplete", "?"):
                             skipped = max(0, skipped - 1)
                         recovered += 1
+                        _saved[prev_reason] = _saved.get(prev_reason, 0) + 1
                         LOG.info("[q%s] (재시도 %d/%d) %s | %s | 회복 → CLOSE (이미 마감)",
                                  quarter, ri, len(retry_targets), p["code"], _label_short)
                     elif res.get("reason") == "opts_incomplete":
@@ -1044,6 +1090,12 @@ def run_close_workers(target_date: Optional[date], dry_run: bool,
                                  res["status"], res.get("reason", "?"))
                 LOG.info("[q%s] End-of-run 재시도 완료: %d/%d 회복",
                          quarter, recovered, len(retry_targets))
+                # 사유별 성적. 며칠 쌓이면 '이 사유는 재시도해도 소용없다' 를
+                # 근거로 말할 수 있다. 근거 없이 빼면 열린 재고를 놓친다.
+                if _tried:
+                    LOG.info("[q%s] 재시도 성적(사유별): %s", quarter,
+                             " / ".join(f"{r} {_saved.get(r, 0)}/{n}"
+                                        for r, n in sorted(_tried.items())))
                 try:
                     retry_page.close()
                 except Exception:

@@ -714,9 +714,17 @@ def run_region(
         errors.extend(f1)
         errors.extend(f2)
 
-        LOG.info("=== GG %s 완료: size15=%d행/%d페이지, size50=%d행/%d페이지, 실패페이지=%d ===",
-                 region, n1, p1, n2, p2, len(f1) + len(f2))
-        return n1 + n2, errors
+        # ⚠️ 두 패스는 '같은 옵션들' 을 두 번 훑는다 (size15 로 한 번, size50 으로
+        #    다시 한 번 — 페이지 넘김 중에 빠지는 것을 잡으려는 것이다).
+        #    그래서 n1 + n2 는 실제 마감한 옵션 수가 아니라 그 두 배다.
+        #    (2026-08-31: KOREA 106행 x 2 = 'success=212' 로 보고됐다.
+        #     전체 합계 '성공 346' 도 그만큼 부풀어 있었다)
+        #    실제로 다룬 옵션 수는 두 패스 중 많은 쪽이다.
+        done = max(n1, n2)
+        LOG.info("=== GG %s 완료: size15=%d행/%d페이지, size50=%d행/%d페이지, "
+                 "실패페이지=%d → 옵션 %d개 ===",
+                 region, n1, p1, n2, p2, len(f1) + len(f2), done)
+        return done, errors
     except Exception as e:
         LOG.exception("GG %s 처리 중 예외: %s", region, e)
         errors.append(f"{region}: {e}")
