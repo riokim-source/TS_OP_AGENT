@@ -79,8 +79,33 @@ for it in build_open_plan([ri2], is_op=False):
         print(f"  GG: {it['product']} {it['qty']} / 픽업 {it['pickups_allowed'] or '(모든 픽업)'}")
         print(f"  메모 주석: {it['note'] or '(없음)'}")
 
+# ── 한 칸에 언어가 둘 적힌 경우 ──────────────────────────────────────────
+# 'Chinese,English' 가 통째로 후보 하나가 되면, 그 뜻 없는 항목만 빼도
+# '언어 제한' 이 걸려 오픈이 통째로 달라진다 (10 -> 5 + (중) 5).
+from core.lastmin.memo import available_languages  # noqa: E402
+
+print()
+print("=== 한 칸에 'Chinese,English' 로 들어온 경우 ===")
+langs = available_languages("Mt. Fuji Highlight",
+                            ["English", "Chinese", "Korean", "Japanese",
+                             "Chinese,English"])
+print(f"  후보: {langs}")
+
+mixed = [x for x in langs if "," in x or "/" in x or "&" in x]
+plain = RowInput(area="Tokyo", product="Mt. Fuji Highlight", qty=20,
+                 languages_all=langs, languages_sel=list(langs))
+print(f"  섞인 값 남아있나: {mixed or '없음'}")
+print(f"  전부 선택 시 제한: {plain.language_restricted()}")
+
 print()
 bad = []
+if mixed:
+    bad.append(f"한 칸에 둘 적힌 값이 후보로 남았다: {mixed}")
+if plain.language_restricted():
+    bad.append("전부 골랐는데 언어 제한이 걸린다")
+for need in ("english", "chinese"):
+    if need not in langs:
+        bad.append(f"{need} 가 후보에 없다")
 if "Hongdae" not in bts["pickups"]:
     bad.append("예약에 없는 픽업지(홍대)가 후보에 없다")
 if "chinese" not in bts["languages"]:

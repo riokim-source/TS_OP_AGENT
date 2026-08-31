@@ -78,10 +78,37 @@ def available_languages(base: str, sheet_languages: list[str]) -> list[str]:
     (language_restricted() 는 일부만 골랐을 때만 참). 사람이 빼야 제한이 된다.
     """
     order = ["english", "korean", "chinese", "japanese"]
-    got = {str(x).strip().casefold() for x in sheet_languages if str(x).strip()}
+    got: set[str] = set()
+    for raw in sheet_languages:
+        got.update(_split_langs(raw))
     got.update(klook_language_variants(base).keys())
     extra = sorted(x for x in got if x not in order)
     return list(order) + extra
+
+
+_LANG_SEP = re.compile(r"[,/;&+|·]| and ")
+
+
+def _split_langs(raw) -> list[str]:
+    """
+    한 칸에 언어가 여러 개 적힌 경우를 낱개로 나눈다.
+
+    ⚠️ 예약 파일에 'Chinese,English' 처럼 한 칸에 둘이 들어온다. 그대로 두면
+       그게 통째로 하나의 언어 후보가 되어 목록에 'chinese,english' 로 뜬다.
+       보기 나쁜 것으로 끝나지 않는다 -- 후보가 하나 늘어난 만큼
+       language_restricted() 의 기준도 늘어나서, 그 뜻 없는 항목 하나만 빼도
+       '언어를 제한했다' 가 된다. 그러면 오픈이 통째로 달라진다.
+           전부 선택        Mt. Fuji Highlight 10
+           그것만 뺌        Mt. Fuji Highlight 5 + (중) 5   <- 사람은 모른다
+       (2026-08-31: 감천미포 예약 1건이 'Chinese,English' 였다)
+
+    나눈 뒤에도 모르는 값이면 그대로 남긴다. 조용히 버리면 '그 언어를
+    제외한다' 는 지시를 만들 수 없다.
+    """
+    text = str(raw or "").strip()
+    if not text or text.lower() == "nan":
+        return []
+    return [p.strip().casefold() for p in _LANG_SEP.split(text) if p.strip()]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
