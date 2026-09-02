@@ -21,7 +21,7 @@ import tempfile
 import threading
 
 from ..paths import ota_close_dir
-from ..routing import get_routing
+from ..routing import get_routing, cdp_attach_ok
 
 RESULT_MARKER = "##GG_RESULT##"
 
@@ -97,6 +97,13 @@ def run(job, plan: list[dict], target_date: str | None, dry_run: bool = False) -
             if not (boot.get("ok") and boot.get("ready")):
                 job.log("SYS", f"[오류] {key}: {boot.get('message', '부팅 실패')}")
                 continue
+
+        ok_cdp, why = cdp_attach_ok(r.profile_port(key))
+        if not ok_cdp:
+            job.log("SYS", f"[오류] {key}: Chrome 은 떠 있는데 봇이 붙지 못합니다 "
+                           f"(port {r.profile_port(key)}) — {why}. "
+                           f"그 Chrome 창을 닫고 다시 켠 뒤 실행하세요.")
+            continue
 
         # 로그인 확인 — GG 는 2단계 인증(TOTP)이 자주 걸린다
         try:

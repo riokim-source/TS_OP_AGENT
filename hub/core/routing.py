@@ -233,7 +233,14 @@ def port_open(port: int, timeout: float = 0.4) -> bool:
 
 
 def cdp_ready(port: int, timeout: float = 1.5) -> bool:
-    """소켓만 열린 '반쯤 뜬 Chrome' 방어. /json/version 이 응답해야 준비된 것."""
+    """
+    소켓만 열린 '반쯤 뜬 Chrome' 방어. /json/version 이 응답해야 준비된 것.
+
+    ⚠️ 이것만으로는 부족하다. 봇은 HTTP 가 아니라 CDP(웹소켓)로 붙는데,
+       /json/version 은 200 을 주면서 CDP 핸드셰이크만 안 끝나는 상태가 있다.
+       그때 화면에는 '연결됨' 이라고 뜨고 봇은 3분씩 기다리다 죽는다.
+       실제로 붙어 봐야 아는 것은 cdp_attach_ok() 를 쓴다.
+    """
     # 죽은 포트에 긴 타임아웃을 주면 상태 조회 전체가 느려진다 (프로필 9개 x 1.5s).
     if not port_open(port, timeout=min(0.3, timeout)):
         return False
@@ -242,6 +249,35 @@ def cdp_ready(port: int, timeout: float = 1.5) -> bool:
             return r.status == 200
     except Exception:
         return False
+
+
+def cdp_attach_ok(port: int, timeout_ms: int = 15000) -> tuple[bool, str]:
+    """
+    봇과 **같은 방식**으로 실제 붙어 본다. 반환 (된다, 사유).
+
+    ⚠️ /json/version 이 200 이어도 여기서 막히는 Chrome 이 있다.
+       2026-09-01 팀원 PC 마감: 9522/9523 이 이 상태라 KKday·GG 가 전멸했다.
+       2026-09-02 이 PC 오픈: 9530 이 이 상태라 MRT 3건이 통째로 실패했다.
+       둘 다 화면에는 'Chrome 연결됨' 으로 떠 있었다.
+
+    실행 전에 한 번 걸러 주면, 사람이 그 Chrome 만 다시 켜고 이어갈 수 있다.
+    그냥 두면 워커마다 타임아웃을 다 채우고서야 실패한다.
+
+    playwright 를 여기서 늦게 불러온다 — 중앙 화면(클라우드)에는 없을 수 있다.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as e:
+        return True, f"확인 못 함 (playwright 없음: {str(e)[:40]})"
+    try:
+        with sync_playwright() as p:
+            b = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}",
+                                            timeout=timeout_ms)
+            n = sum(len(c.pages) for c in b.contexts)
+            b.close()
+        return True, f"탭 {n}개"
+    except Exception as e:
+        return False, str(e).splitlines()[0][:90]
 
 
 def devtools_active_port(profile_dir: Path) -> int | None:

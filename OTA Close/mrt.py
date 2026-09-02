@@ -49,6 +49,15 @@ from typing import Dict, List
 import pandas as pd
 from playwright.sync_api import sync_playwright, Page
 
+# Chrome 에 붙을 때 기다리는 시간 (ms).
+# ⚠️ playwright 기본값은 180초다. Chrome 이 "반쯤 죽은" 상태 -- /json/version 은
+#    200 을 주는데 CDP 핸드셰이크(<ws connected> 이후)가 안 끝나는 상태 -- 면
+#    워커마다 3분씩 버리고 그제서야 실패한다.
+#    2026-09-01 팀원 PC: 마감에서 25번, 2026-09-02: MRT 오픈 3건 전멸.
+#    빨리 실패해야 사람이 그 Chrome 을 다시 켤 시간이 있다.
+CDP_CONNECT_TIMEOUT_MS = int(os.environ.get("CDP_CONNECT_TIMEOUT_MS") or 30000)
+
+
 RESULT_LOG_FILE = os.environ.get("MRT_RESULT_LOG_FILE", "mrt_close_result_log_v10_week_refresh_commit.xlsx")
 # 스크린샷 기능 제거 - 폴더 자동 생성 안 함
 
@@ -2871,7 +2880,7 @@ def run_close(target_date=None, dry_run: bool = False):
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(CDP_URL)
+            browser = p.chromium.connect_over_cdp(CDP_URL, timeout=CDP_CONNECT_TIMEOUT_MS)
             if not browser.contexts:
                 result["errors"].append("Chrome context 없음")
                 return result
@@ -3202,7 +3211,7 @@ def run_open(items, target_date_str=None, dry_run: bool = False) -> dict:
     results = []
     print(f"[MRT] 오픈 시작 | {len(items)}건 | dry_run={dry_run}")
     with _spw() as p:
-        browser = p.chromium.connect_over_cdp(CDP_URL)
+        browser = p.chromium.connect_over_cdp(CDP_URL, timeout=CDP_CONNECT_TIMEOUT_MS)
         if not browser.contexts:
             print("[MRT] Chrome context 없음")
             return {"results": [], "error": "Chrome context 없음"}
@@ -3628,7 +3637,7 @@ if __name__ == "__main__":
 
         try:
             with sync_playwright() as p:
-                browser = p.chromium.connect_over_cdp(CDP_URL)
+                browser = p.chromium.connect_over_cdp(CDP_URL, timeout=CDP_CONNECT_TIMEOUT_MS)
                 if not browser.contexts:
                     print("[MRT/discover] Chrome context 없음")
                     _sys_cli.exit(3)

@@ -9,9 +9,19 @@ Chrome 연결 및 공통 설정.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Tuple
 
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
+
+# Chrome 에 붙을 때 기다리는 시간 (ms).
+# ⚠️ playwright 기본값은 180초다. Chrome 이 "반쯤 죽은" 상태 -- /json/version 은
+#    200 을 주는데 CDP 핸드셰이크(<ws connected> 이후)가 안 끝나는 상태 -- 면
+#    워커마다 3분씩 버리고 그제서야 실패한다.
+#    2026-09-01 팀원 PC: 마감에서 25번, 2026-09-02: MRT 오픈 3건 전멸.
+#    빨리 실패해야 사람이 그 Chrome 을 다시 켤 시간이 있다.
+CDP_CONNECT_TIMEOUT_MS = int(os.environ.get("CDP_CONNECT_TIMEOUT_MS") or 30000)
+
 
 LOG = logging.getLogger(__name__)
 
@@ -31,7 +41,8 @@ def connect_and_setup(port: int) -> Tuple[Browser, BrowserContext, Page]:
     필요시 context.close() 정도만.
     """
     p = sync_playwright().start()
-    browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+    browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}",
+                                          timeout=CDP_CONNECT_TIMEOUT_MS)
 
     if not browser.contexts:
         raise RuntimeError(

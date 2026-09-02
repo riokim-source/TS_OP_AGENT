@@ -44,6 +44,15 @@ def _v(*args, **kwargs):
 # 매핑은 packages.py 에서만 관리. 여기서는 조회만.
 from packages import get_package, PACKAGES as _PACKAGES_MAP
 
+# Chrome 에 붙을 때 기다리는 시간 (ms).
+# ⚠️ playwright 기본값은 180초다. Chrome 이 "반쯤 죽은" 상태 -- /json/version 은
+#    200 을 주는데 CDP 핸드셰이크(<ws connected> 이후)가 안 끝나는 상태 -- 면
+#    워커마다 3분씩 버리고 그제서야 실패한다.
+#    2026-09-01 팀원 PC: 마감에서 25번, 2026-09-02: MRT 오픈 3건 전멸.
+#    빨리 실패해야 사람이 그 Chrome 을 다시 켤 시간이 있다.
+CDP_CONNECT_TIMEOUT_MS = int(os.environ.get("CDP_CONNECT_TIMEOUT_MS") or 30000)
+
+
 # 하위 호환: 기존 코드에서 PACKAGE_MAP 참조 시 packages.py 데이터를 사용
 # (신규 코드는 from packages import get_package 를 직접 사용 권장)
 PACKAGE_MAP = {k: v['id'] for k, v in _PACKAGES_MAP.items()}
@@ -1027,6 +1036,28 @@ def open_package_detail(page, package_id):
         )
 
     info = get_package_result_link_info()
+
+    # ⚠️ 검색 결과 줄이 <a> 로 감싸이기 전에 먼저 보면 href 가 없다.
+    #
+    #    그러면 아래 'href 로 바로 이동'(제일 확실한 길)을 통째로 건너뛰고,
+    #    JS 클릭 -> //a[...] 셀렉터 3종 순으로 내려가는데 그 셀렉터들은 전부
+    #    <a> 를 찾으므로 다 같이 실패한다. 결국 '상세 진입 실패' 로 끝난다.
+    #    (2026-09-02: Shirakawago Regular 656584 가 이렇게 안 열렸다.
+    #     그 뒤 같은 화면을 재보니 <a> 와 href 가 멀쩡했고 상세는 2.4초에 떴다)
+    #
+    #    href 가 없으면 몇 초 더 보고 <a> 가 생기는지 기다린다.
+    if info and not (info.get("href") or ""):
+        for _ in range(12):                     # 최대 6초
+            page.wait_for_timeout(500)
+            again = get_package_result_link_info()
+            if again and (again.get("href") or ""):
+                _v("[진행] <a> 가 늦게 떠서 다시 잡음 (href 확보)")
+                info = again
+                break
+        else:
+            print(f"[주의] '{package_id} -' 줄에 href 가 없습니다 "
+                  f"(source={info.get('source')}). 링크가 아직 안 그려졌을 수 있습니다.")
+
     if not info:
         raise Exception(f"검색 결과에서 '{package_id} -' Package 링크/href를 찾지 못했습니다.")
 
@@ -5482,7 +5513,7 @@ def main():
 
     logs = []
     with sync_playwright() as p:
-        browser = p.chromium.connect_over_cdp(args.cdp_url)
+        browser = p.chromium.connect_over_cdp(args.cdp_url, timeout=CDP_CONNECT_TIMEOUT_MS)
         if not browser.contexts:
             raise Exception("열려 있는 Chrome context를 찾지 못했습니다. start_chrome.bat으로 크롬을 먼저 실행하세요.")
         context = browser.contexts[0]

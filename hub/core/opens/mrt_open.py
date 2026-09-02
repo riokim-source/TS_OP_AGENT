@@ -28,7 +28,7 @@ import threading
 from ..paths import ota_close_dir
 from ..productmap import get_map
 from .mrt_courses import course_of, is_multi_course
-from ..routing import get_routing
+from ..routing import get_routing, cdp_attach_ok
 
 RESULT_MARKER = "##MRT_RESULT##"
 
@@ -153,7 +153,16 @@ def run(job, plan: list[dict], target_date: str | None, dry_run: bool = False) -
         if not (boot.get("ok") and boot.get("ready")):
             job.done(error=boot.get("message", f"{key} Chrome 준비 실패"))
             return
-    job.log("SYS", f"[Chrome] MRT -> {key} (port {r.profile_port(key)})")
+    # ⚠️ Chrome 이 떠 있어도 봇이 못 붙는 상태가 있다. /json/version 은 200 인데
+    #    CDP 핸드셰이크만 안 끝난다. 그대로 두면 3분 기다리다 통째로 실패한다.
+    #    (2026-09-02: 9530 이 이래서 MRT 오픈 3건이 전부 날아갔다)
+    ok_cdp, why = cdp_attach_ok(r.profile_port(key))
+    if not ok_cdp:
+        job.done(error=f"{key} Chrome 은 떠 있는데 봇이 붙지 못합니다 "
+                       f"(port {r.profile_port(key)}) — {why}. "
+                       f"그 Chrome 창을 닫고 다시 켠 뒤 실행하세요.")
+        return
+    job.log("SYS", f"[Chrome] MRT -> {key} (port {r.profile_port(key)}) · {why}")
 
     for it in items:
         c = f" / 코스 '{it['course']}'" if it.get("course") else ""

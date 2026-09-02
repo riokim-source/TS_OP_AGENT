@@ -25,8 +25,11 @@ import argparse
 import io
 import os
 import shutil
+import subprocess
 import sys
 import zipfile
+import json
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -180,6 +183,41 @@ def write_readme(dest: Path, with_key: bool) -> None:
 KEEP = {".git", ".gitignore"}          # 저장소로 쓸 때 지우면 안 되는 것
 
 
+VERSION_REL = "hub/data/version.json"
+
+
+def code_version() -> dict:
+    """
+    지금 소스가 어느 시점 것인지.
+
+    ⚠️ 받은 폴더만 보고는 어느 버전인지 알 수 없다. GitHub ZIP 은 파일 날짜를
+       내려받은 시각이 아니라 커밋 시각으로 넣기 때문에 눈으로도 못 가린다.
+       실제로 2026-09-02 아침에 8/31 11:19 버전으로 마감을 돌았는데, 로그만
+       봐서는 아무도 몰랐다 (그날 고친 것 5개가 전부 빠진 채였다).
+       그래서 묶음을 만들 때 버전을 새겨 두고, 실행 로그 맨 위에 찍는다.
+    """
+    def git(*args) -> str:
+        try:
+            return subprocess.run(["git", *args], cwd=str(ROOT), text=True,
+                                  capture_output=True, timeout=10).stdout.strip()
+        except Exception:
+            return ""
+    return {
+        "commit": git("rev-parse", "--short", "HEAD") or "?",
+        "at": git("log", "-1", "--format=%cd", "--date=format:%Y-%m-%d %H:%M") or "?",
+        "subject": (git("log", "-1", "--format=%s") or "")[:70],
+        "built": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+def write_version(dest: Path) -> dict:
+    v = code_version()
+    p = dest / VERSION_REL
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(v, ensure_ascii=False, indent=1), encoding="utf-8")
+    return v
+
+
 def make_folder(dest: Path, with_key: bool, keep_git: bool = False) -> tuple[int, int]:
     """
     공유 폴더를 다시 만든다.
@@ -204,6 +242,7 @@ def make_folder(dest: Path, with_key: bool, keep_git: bool = False) -> tuple[int
         n += 1
         size += src.stat().st_size
     write_readme(dest, with_key)
+    write_version(dest)          # 받은 쪽이 '어느 버전인지' 알 수 있게
     return n, size
 
 
@@ -213,6 +252,8 @@ def make_zip_bytes(with_key: bool = False) -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for rel, _why in build_manifest(with_key):
             z.write(ROOT / rel, f"Last minute system/{rel}")
+        z.writestr(f"Last minute system/{VERSION_REL}",
+                   json.dumps(code_version(), ensure_ascii=False, indent=1))
         note = ("TOURSTORY OP SYSTEM\r\n\r\n"
                 "1. 압축을 풀고 '설치.bat' 을 더블클릭\r\n"
                 "2. 'Agent 켜기.bat' 을 켜 두기\r\n"

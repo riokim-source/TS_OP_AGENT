@@ -234,6 +234,14 @@ def run_job(agent_name: str, spec: dict) -> None:
     p = spec.get("params") or {}
     kind = spec.get("kind")
     job.log("SYS", f"[Agent] {agent_name} 에서 실행")
+    # ⚠️ 어느 버전으로 돌았는지 로그만 보고 알 수 있어야 한다.
+    #    (2026-09-02: 옛 폴더로 마감을 돌았는데 로그로는 구분이 안 됐다)
+    try:
+        from core.paths import version_line, SYSTEM_DIR
+        job.log("SYS", f"[Agent] {version_line()}")
+        job.log("SYS", f"[Agent] 폴더 {SYSTEM_DIR}")
+    except Exception as e:
+        job.log("SYS", f"[Agent] 코드 버전을 확인하지 못했습니다: {str(e)[:60]}")
 
     try:
         if kind == "close":

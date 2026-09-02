@@ -21,7 +21,7 @@ import threading
 
 from ..paths import ota_close_dir
 from .. import kkday_codes
-from ..routing import get_routing
+from ..routing import get_routing, cdp_attach_ok
 
 AGENCIES = ["klook", "kkday", "gg", "vi", "mrt"]
 
@@ -78,7 +78,20 @@ def prepare_chromes(job, agencies: list[str], regions: list[str]) -> bool:
     for key, info in req["profiles"].items():
         chans = ", ".join(info["channels"])
         if r.profile_owns_port(key):
-            job.log("SYS", f"[Chrome] {key} (port {r.profile_port(key)}) 연결됨 · {chans}")
+            # ⚠️ 여기까지는 HTTP(/json/version) 로만 확인한 것이다. 봇은 CDP 로
+            #    붙는데, HTTP 는 200 인데 CDP 만 안 되는 Chrome 이 있다.
+            #    그대로 두면 워커마다 타임아웃을 다 채우고서야 실패한다.
+            #    (2026-09-01 마감 KKday·GG 전멸 / 2026-09-02 오픈 MRT 3건)
+            ok, why = cdp_attach_ok(r.profile_port(key))
+            if ok:
+                job.log("SYS", f"[Chrome] {key} (port {r.profile_port(key)}) "
+                               f"연결됨 · {chans} · {why}")
+                continue
+            job.log("SYS", f"[오류] {key}: Chrome 은 떠 있는데 봇이 붙지 못합니다 "
+                           f"(port {r.profile_port(key)}) — {why}")
+            job.log("SYS", f"[오류] {key}: 그 Chrome 창을 닫고 다시 켠 뒤 실행하세요. "
+                           f"({chans} 가 실행되지 않습니다)")
+            all_ok = False
             continue
         if r.port_conflict(key):
             job.log("SYS", f"[오류] {key}: port {r.profile_port(key)} 를 다른 프로필의 Chrome 이 "

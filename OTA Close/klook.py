@@ -48,6 +48,15 @@ from shared.health import ensure_chrome, is_port_alive
 from shared.logger import get_agency_logger
 from shared.types import Result
 
+# Chrome 에 붙을 때 기다리는 시간 (ms).
+# ⚠️ playwright 기본값은 180초다. Chrome 이 "반쯤 죽은" 상태 -- /json/version 은
+#    200 을 주는데 CDP 핸드셰이크(<ws connected> 이후)가 안 끝나는 상태 -- 면
+#    워커마다 3분씩 버리고 그제서야 실패한다.
+#    2026-09-01 팀원 PC: 마감에서 25번, 2026-09-02: MRT 오픈 3건 전멸.
+#    빨리 실패해야 사람이 그 Chrome 을 다시 켤 시간이 있다.
+CDP_CONNECT_TIMEOUT_MS = int(os.environ.get("CDP_CONNECT_TIMEOUT_MS") or 30000)
+
+
 LOG = get_agency_logger("KLOOK")
 LOGS_DIR = ROOT / "logs"
 LOGS_DIR.mkdir(exist_ok=True)
@@ -342,7 +351,7 @@ def _close_one_region(
         return results
 
     try:
-        browser = p.chromium.connect_over_cdp(cdp_url)
+        browser = p.chromium.connect_over_cdp(cdp_url, timeout=CDP_CONNECT_TIMEOUT_MS)
     except Exception as e:
         results.append(ProductResult(
             region=region, name="*", package_id="*", workflow="*",
