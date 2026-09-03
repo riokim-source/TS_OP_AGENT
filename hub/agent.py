@@ -481,15 +481,34 @@ LOCK = _lock_path()
 
 
 def _pid_alive(pid: int) -> bool:
-    """이 PID 가 아직 살아 있나. (Windows: tasklist 로 확인)"""
+    """
+    이 PID 로 **우리 Agent 가** 아직 돌고 있나.
+
+    ⚠️ 'PID 가 존재하는가' 만 보면 안 된다. Windows 는 PID 를 재사용한다.
+       Agent 가 죽은 뒤(재부팅 등) 그 번호를 엉뚱한 프로그램이 물려받으면,
+       자물쇠는 영원히 '이미 돌고 있다' 고 말하고 Agent 를 못 켜게 된다.
+       (2026-09-03: 자물쇠의 PID 28632 를 msedge.exe 가 쓰고 있었다.
+        실제 Agent 는 하나도 안 돌고 있는데 켤 수가 없었다)
+
+    그래서 이름까지 본다. python 이 아니면 남의 프로세스로 보고 무시한다.
+    확인 자체가 안 되면 '살아 있다' 고 본다 (둘이 도는 것이 더 위험하다).
+    """
     if pid <= 0:
         return False
     try:
         import subprocess
-        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
                              capture_output=True, text=True, errors="replace",
                              timeout=8).stdout
-        return str(pid) in out
+        if str(pid) not in out:
+            return False
+        # "python3.13.exe","28632",...  <- 첫 칸이 실행파일 이름
+        name = (out.strip().split(",", 1)[0] or "").strip('" ').lower()
+        if name and "python" not in name:
+            print(f"[AGENT] 자물쇠의 PID {pid} 는 지금 {name} 입니다 "
+                  f"— 예전 Agent 가 남긴 것으로 보고 새로 잡습니다.")
+            return False
+        return True
     except Exception:
         return True          # 확인 못 하면 '살아 있다' 고 본다 (덜 위험한 쪽)
 
