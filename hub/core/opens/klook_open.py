@@ -35,6 +35,57 @@ def _core():
     return core
 
 
+_LANG_SUFFIX = ("(한)", "(중)", "(일)")
+
+
+def ambiguous_names() -> dict:
+    """
+    구분이 안 되는 상품 이름 -> 사유.
+
+    ⚠️ packages.py 에서 언어 변형이 기본 상품과 **같은 번호**를 쓰는 것들이 있다.
+       'activity' 방식 상품이 그렇다. 두 항목이 글자 하나까지 똑같아서 봇이
+       한국어와 영어를 구분할 방법이 없고, 결국 기본(영어) 상품이 열린다.
+
+           Osaka Kobe (Night)     id=216946 activity
+           Osaka Kobe (Night)(한) id=216946 activity   <- 완전히 같다
+
+       2026-09-03: 'Osaka Kobe (Night)(한) 6' 을 열라고 했는데 영어 상품이
+       6자리 열렸다. 한국어 상품은 닫힌 채로 남았다. 19개 이름이 이 상태다.
+       ('package' 방식은 언어별로 번호가 따로 있어 정상이다)
+
+    번호를 알아내 packages.py 를 고치기 전까지는, 엉뚱한 상품을 여는 대신
+    **열지 않고 사람에게 넘긴다.** 잘못 여는 쪽이 훨씬 비싸다.
+    """
+    pk = _packages_map()
+    if not pk:
+        return {}
+    by_id: dict = {}
+    for name, v in pk.items():
+        by_id.setdefault((str(v.get("id")), v.get("workflow")), []).append(name)
+    out: dict = {}
+    for (pid, wf), names in by_id.items():
+        if len(names) < 2:
+            continue
+        plain = [n for n in names if not n.endswith(_LANG_SUFFIX)]
+        if not plain:
+            continue                       # 변형끼리만 있으면 기본이 없다는 뜻
+        for n in names:
+            if n.endswith(_LANG_SUFFIX):
+                out[n] = (f"'{n}' 과 '{plain[0]}' 이 Klook 번호 {pid} 로 같아서 "
+                          f"구분할 수 없습니다. 그대로 열면 '{plain[0]}' 이 열립니다. "
+                          f"Klook 에서 직접 열어 주세요.")
+    return out
+
+
+def _packages_map() -> dict:
+    try:
+        ensure_on_syspath(klook_open_dir())
+        import packages as pk           # type: ignore
+        return dict(pk.PACKAGES)
+    except Exception:
+        return {}
+
+
 def plan_to_text(plan: list[dict]) -> str:
     """
     오픈 계획 -> Klook 입력 텍스트.
@@ -43,14 +94,26 @@ def plan_to_text(plan: list[dict]) -> str:
        '상품명 수량' 으로 끝나야 해서 "(중국어 불가)" 같은 주석이 붙으면
        '형식 인식 실패' 로 떨어진다. 그래서 계획에서 product/qty 만 뽑아 쓴다.
     """
+    bad = ambiguous_names()
     parts: list[str] = []
     for item in plan:
         if item.get("channel") != "KLOOK":
             continue
         if item.get("mode") != "qty":
             continue
+        if item["product"] in bad:
+            continue          # 엉뚱한 상품을 여느니 열지 않는다 (ambiguous_names 참고)
         parts.append(f"{item['product']} {int(item['qty'])}")
     return ", ".join(parts)
+
+
+def dropped_for_ambiguity(plan: list[dict]) -> list[dict]:
+    """이번 계획에서 '구분 불가' 로 빠진 것들."""
+    bad = ambiguous_names()
+    return [{"name": i["product"], "qty": int(i.get("qty") or 0), "why": bad[i["product"]]}
+            for i in plan
+            if i.get("channel") == "KLOOK" and i.get("mode") == "qty"
+            and i.get("product") in bad]
 
 
 def text_to_plan(text: str) -> tuple[list[dict], list[str]]:
@@ -119,7 +182,9 @@ def preview(plan: list[dict], target_date: str | None) -> dict:
     return {
         "text": text,
         "total": parsed["total"],
-        "unknown": [{"text": u.get("input_text"), "memo": u.get("memo")} for u in parsed["unknown"]],
+        "unknown": ([{"text": u.get("input_text"), "memo": u.get("memo")} for u in parsed["unknown"]]
+                    + [{"text": f"{d['name']} {d['qty']}", "memo": d["why"]}
+                       for d in dropped_for_ambiguity(plan)]),
         "warnings": parsed["warnings"],
         "regions": {
             region: [{"name": t["name"], "qty": t["inventory"], "workflow": t["workflow"]}
@@ -195,6 +260,11 @@ def run(job, plan: list[dict], target_date: str | None) -> None:
         job.log("SYS", "[KLOOK] 오픈할 항목이 없습니다.")
         job.done(summary={"channel": "KLOOK", "total": 0})
         return
+
+    for d in dropped_for_ambiguity(plan):
+        job.log("KLOOK", f"[주의] {d['why']}")
+        job.result({"channel": "KLOOK", "item": f"{d['name']} {d['qty']}",
+                    "result": "구분 불가", "memo": d["why"][:300]})
 
     parsed = core.parse_input(text)
     for w in parsed["warnings"]:
