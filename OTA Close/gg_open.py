@@ -88,10 +88,23 @@ PICKUP_ALIASES: dict[str, list[str]] = {
     "sangwangsimni":  ["sangwangsimni"],
 }
 
+# 우리 투어명 -> GG 화면에 적힌 이름.
+#
+# ⚠️ GG 는 맵핑표 없이 화면 이름으로 찾는다. 일본 상품은 GG 쪽에 한글로
+#    올라가 있어서 영어 투어명으로는 하나도 못 찾는다.
+#    (2026-09-03: Mt. Fuji Highlight 18명 / Mt. Fuji Signature 16명 이
+#     '못 찾음' 으로 끝났다. 화면에는 '후지하이라이트', '후지시그니처' 였다)
+#    새 이름은 실행 로그의 '화면 옵션 N종' 에 그대로 찍히니 거기서 가져오면 된다.
 TOUR_ALIASES: dict[str, list[str]] = {
     "에버":        ["에버셔틀", "에버"],
     "mbc 스튜디오": ["mbc"],
     "mbc 스튜디오(드라마 리허설)": ["mbc"],
+    # ── 일본 (GG 는 한글로 올라가 있다) ──────────────────────────────
+    "mt. fuji highlight":   ["후지하이라이트"],
+    "mt. fuji signature":   ["후지시그니처"],
+    "kyoto & nara":         ["교토 & 나라"],
+    "amanohashidate":       ["아마노하시다테"],
+    "kamakura highlight":   ["Kamakura Highlights"],
 }
 
 

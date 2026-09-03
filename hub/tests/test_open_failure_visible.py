@@ -17,7 +17,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import agent  # noqa: E402
+# 실행 순서는 core.opens.run_all 한 곳에만 있다 (agent / dispatch 가 둘 다 이걸 쓴다)
+from core.opens import run_all  # noqa: E402
 
 
 class FakeJob:
@@ -44,12 +45,12 @@ class FakeJob:
 
 def run_case(klook, mrt, gg):
     job = FakeJob()
-    agent.klook_open.run = lambda j, m, t: klook(j)
-    agent.mrt_open.run = lambda j, m, t, dry_run=False: mrt(j)
-    agent.gg_open.run = lambda j, m, t, dry_run=False: gg(j)
+    run_all.klook_open.run = lambda j, m, t: klook(j)
+    run_all.mrt_open.run = lambda j, m, t, dry_run=False: mrt(j)
+    run_all.gg_open.run = lambda j, m, t, dry_run=False: gg(j)
     plan = [{"channel": c, "mode": "qty", "product": "X", "qty": 5}
             for c in ("KLOOK", "MRT", "GG")]
-    agent._run_open(job, {"plan": plan, "date": "2026-08-31",
+    run_all.run_open(job, {"plan": plan, "date": "2026-08-31",
                           "channels": ["KLOOK", "MRT", "GG"]})
     return job
 

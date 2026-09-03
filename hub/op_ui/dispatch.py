@@ -33,7 +33,7 @@ if str(_HUB) not in sys.path:
 from core import queue as Q
 from core.close import runner as close_runner
 from core.jobs import MANAGER, Job
-from core.opens import gg_open, klook_open, mrt_open
+from core.opens import run_all
 
 
 def mode() -> str:
@@ -252,33 +252,16 @@ def start(kind: str, title: str, params: dict, total: int = 0,
 
 
 def _run_open_local(job, p: dict) -> None:
-    """local 모드의 오픈. Agent 쪽 _run_open 과 같은 순서를 유지한다."""
-    plan = p.get("plan") or []
-    target = p.get("date")
-    channels = p.get("channels") or []
-    dry = bool(p.get("dry_run"))
-    mine = [x for x in plan if x.get("channel") in channels]
+    """
+    이 PC 에서 바로 실행할 때의 오픈.
 
-    runners = []
-    if "KLOOK" in channels and any(x["channel"] == "KLOOK" for x in mine):
-        runners.append(("KLOOK", lambda: klook_open.run(job, mine, target)))
-    if "MRT" in channels and any(x["channel"] == "MRT" for x in mine):
-        runners.append(("MRT", lambda: mrt_open.run(job, mine, target, dry_run=dry)))
-    if "GG" in channels and any(x["channel"] == "GG" for x in mine):
-        runners.append(("GG", lambda: gg_open.run(job, mine, target, dry_run=dry)))
-
-    for name, fn in runners:
-        if job.stopping:
-            job.log("SYS", f"[중단] {name} 실행 안 함")
-            break
-        job.log("SYS", f"===== {name} 오픈 시작 =====")
-        try:
-            fn()
-        except Exception as e:
-            job.log("SYS", f"[오류] {name}: {e}")
-        # 각 러너가 job.done() 을 부르므로 다음 러너를 위해 되돌린다
-        job.finished = False
-    job.done(summary={"channels": [n for n, _ in runners], "dry_run": dry})
+    ⚠️ 순서와 판정은 core.opens.run_all 한 곳에만 둔다.
+       예전에는 여기에 같은 코드를 복사해 두고 '같은 순서를 유지한다' 는
+       주석만 달았는데, 실제로는 어긋났다. Agent 쪽만 고친 수정이 정작
+       매일 쓰는 이 경로에는 안 들어와서, 실패한 OTA 가 화면에 안 보였다.
+       (2026-09-03: MRT 가 22초 만에 아무것도 못 하고 끝났는데 결과가 없었다)
+    """
+    run_all.run_open(job, p)
 
 
 # ── 진행 상황 보기 ────────────────────────────────────────────────────────
