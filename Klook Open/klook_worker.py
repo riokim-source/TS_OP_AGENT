@@ -1135,6 +1135,21 @@ def open_package_detail(page, package_id):
         except Exception:
             continue
 
+    # ⚠️ 왜 못 갔는지 남긴다. 지금까지는 이 문장 하나뿐이라 며칠을 헤맸다.
+    #    href 가 있었는지, 어디로 갔는지, 화면에 뭐가 있는지가 있어야
+    #    'Klook 이 튕겨냈다' 와 '아직 안 그려졌다' 를 가를 수 있다.
+    try:
+        now = page.url
+        body = (get_body_text(page, 2000) or "").replace("\n", " ")[:200]
+        bounced = "act/management" in now or "activity/list" in now
+        print(f"[진단] 상세 진입 실패 {package_id} | href={(href or '(없음)')[:80]}")
+        print(f"[진단]   처음 URL={old_url[:80]}")
+        print(f"[진단]   지금 URL={now[:80]}{'  <- 목록으로 튕김' if bounced else ''}")
+        print(f"[진단]   검색화면인가={is_search_page()} 상세인가={is_detail_page()}")
+        print(f"[진단]   화면글자={body}")
+    except Exception as diag_error:
+        print(f"[진단] 상태를 읽지 못함: {diag_error}")
+
     raise Exception(f"'{package_id} -' Package 링크 클릭 후에도 상세 화면으로 이동하지 못했습니다.")
 
 def dismiss_unsaved_changes_dialog(page, max_tries: int = 2) -> bool:
@@ -5250,7 +5265,16 @@ def _step(label, func, *args, **kwargs):
         raise Exception(f"[단계 실패: {label}] {e}")
 
 
-def process_task(page, task):
+# 화면 이동 단계 — 여기서 실패한 것은 재고를 아직 건드리지 않았으므로
+# 다시 해도 안전하다. (Confirm 이후 단계는 재시도하지 않는다)
+_RETRYABLE_STEPS = (
+    "Package 검색", "Package 상세 진입",
+    "Activity 검색", "Activity 상세 진입",
+    "Published 패키지 선택", "Inventory schedule 진입",
+)
+
+
+def process_task(page, task, attempt: int = 1):
     """한 상품을 처리. 출력 정책:
     - 성공 + VERBOSE=False: 아무것도 출력 안 함 (모든 진행/단계/주의 로그 버려짐)
     - 실패: 캡처된 진행 로그 + [오류] 메시지를 출력 (디버깅 정보)
@@ -5363,6 +5387,24 @@ def process_task(page, task):
                     go_package_search_hard(page, reason="오류 발생 후 다음 상품 준비")
             except Exception as recover_error:
                 print(f"[주의] 오류 후 검색 화면 복구 실패: {recover_error}")
+
+            # ⚠️ 화면 이동 단계 실패는 그날그날 다르다. 한 번 더 해 본다.
+            #
+            #    같은 상품이 어제는 실패하고 오늘은 성공한다. 반대도 마찬가지다.
+            #      09-03 실패: 486801 488101 486797 277737 284812
+            #      09-04 성공: 위 전부 / 대신 299440 694032 이 실패
+            #    상품 문제가 아니라 그때그때 화면이 안 뜬 것이다.
+            #    VI·MRT 는 이미 재시도가 있는데 Klook 만 없어서, 한 번 미끄러지면
+            #    그 상품은 그날 안 열렸다.
+            #
+            #    재고를 건드리기 전 단계만 다시 한다. Confirm 이후는 손대지 않는다.
+            if attempt == 1 and any(f"[단계 실패: {st}]" in str(e) for st in _RETRYABLE_STEPS):
+                print(f"[재시도] {name} / {package_id} — 화면 이동 단계라 한 번 더 합니다")
+                page.wait_for_timeout(1500)
+                try:
+                    return process_task(page, task, attempt=2)
+                except Exception as retry_error:
+                    print(f"[오류] {name} / {package_id}: 재시도도 실패 — {retry_error}")
             return {
                 "name": name,
                 "input_text": input_text,
