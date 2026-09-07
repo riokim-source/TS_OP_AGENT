@@ -572,9 +572,19 @@ def run(date_str: str, items: list[dict], port: int, dry_run: bool = False) -> d
                 shares = split_across(int(it["qty"]), len(cards_hit))
                 names = []
                 for c, share in zip(cards_hit, shares):
-                    plan[c["testid"]] = (it, share, c)
                     _h, pk = parse_title(c["title"])
                     names.append(f"{pk or '?'}={share}")
+                    # ⚠️ 몫이 0인 픽업지는 '못 한 것' 이 아니다.
+                    #    요청 수량을 앞쪽 픽업지에서 이미 다 나눠 가진 것뿐이다.
+                    #    (1명을 픽업 2곳에 나누면 [1, 0] 이 된다)
+                    #    그런데 결과에 '스킵' 으로 남기면 실행 기록의 '실패/스킵'
+                    #    으로 세어져서, 멀쩡히 다 열린 건이 문제처럼 보인다.
+                    #    (2026-09-07: Seasonal BTS 1명이 정상으로 열렸는데
+                    #     화면에는 스킵 1건이 떴다)
+                    #    수량 0(=마감)은 다른 경우다. 그건 아래에서 close_one 을 탄다.
+                    if share <= 0 and int(it.get("qty") or 0) > 0:
+                        continue
+                    plan[c["testid"]] = (it, share, c)
                 LOG.info("[분할] %s %d명 → 픽업 %d곳: %s",
                          it["tour"], it["qty"], len(cards_hit), ", ".join(names))
                 print(f"[분할] {it['tour']} {it['qty']}명 → 픽업 {len(cards_hit)}곳: "
