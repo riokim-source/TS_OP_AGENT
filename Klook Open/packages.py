@@ -86,6 +86,7 @@ PACKAGES_KOREA_PACKAGE_DEFAULT: dict[str, str] = {
     # 부산
     '감천미포(Sightseeing)': '531290',
     '감천미포': '299440',
+    '감천미포 Early Bird': '748600',
     '청해자감': '694032',
     '아해자감': '694034',
     '캡슐요트': '376785',
