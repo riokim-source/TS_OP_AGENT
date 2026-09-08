@@ -21,7 +21,7 @@ import threading
 
 from ..paths import ota_close_dir
 from .. import kkday_codes
-from ..routing import get_routing, cdp_attach_ok
+from ..routing import get_routing, cdp_ready_or_restart
 
 AGENCIES = ["klook", "kkday", "gg", "vi", "mrt"]
 
@@ -82,14 +82,15 @@ def prepare_chromes(job, agencies: list[str], regions: list[str]) -> bool:
             #    붙는데, HTTP 는 200 인데 CDP 만 안 되는 Chrome 이 있다.
             #    그대로 두면 워커마다 타임아웃을 다 채우고서야 실패한다.
             #    (2026-09-01 마감 KKday·GG 전멸 / 2026-09-02 오픈 MRT 3건)
-            ok, why = cdp_attach_ok(r.profile_port(key))
+            ok, why = cdp_ready_or_restart(r, key, job.log)
             if ok:
                 job.log("SYS", f"[Chrome] {key} (port {r.profile_port(key)}) "
                                f"연결됨 · {chans} · {why}")
                 continue
-            job.log("SYS", f"[오류] {key}: Chrome 은 떠 있는데 봇이 붙지 못합니다 "
+            job.log("SYS", f"[오류] {key}: Chrome 에 붙지 못했습니다 "
                            f"(port {r.profile_port(key)}) — {why}")
-            job.log("SYS", f"[오류] {key}: 그 Chrome 창을 닫고 다시 켠 뒤 실행하세요. "
+            job.log("SYS", f"[오류] {key}: 봇이 다시 켜는 것까지 해봤지만 안 됐습니다. "
+                           f"그 Chrome 창을 직접 닫고 다시 켠 뒤 실행하세요. "
                            f"({chans} 가 실행되지 않습니다)")
             all_ok = False
             continue

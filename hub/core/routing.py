@@ -280,6 +280,53 @@ def cdp_attach_ok(port: int, timeout_ms: int = 15000) -> tuple[bool, str]:
         return False, str(e).splitlines()[0][:90]
 
 
+def cdp_ready_or_restart(r, key: str, log=None, timeout_ms: int = 15000) -> tuple[bool, str]:
+    """
+    붙어 보고, 안 되면 그 Chrome 을 다시 켜서 한 번 더 해 본다.
+
+    ⚠️ '반쯤 죽은 Chrome' 은 사람이 창을 닫고 다시 켜야만 풀린다. 그런데 이게
+       매일 아침 나온다. 2026-09-02 / 09-05 / 09-07 모두 GLOBAL(9530) 에서
+       MRT 오픈이 통째로 실패했고, 그때마다 사람이 손으로 껐다 켰다.
+       봇이 알아채고 스스로 하면 될 일이다.
+
+       프로필은 디스크에 있으므로 로그인은 유지된다. 열려 있던 탭만 없어지는데
+       봇은 어차피 제 주소로 다시 들어간다.
+
+    ⚠️ 포트가 아예 안 열려 있으면(=Chrome 이 없음) 죽일 것도 없다. 그때는
+       평소대로 ensure() 가 띄운다. 여기서 하는 건 '떠 있는데 못 쓰는' 경우만이다.
+    """
+    def say(msg: str) -> None:
+        if log:
+            try:
+                log("SYS", msg)
+            except Exception:
+                pass
+
+    port = r.profile_port(key)
+    ok, why = cdp_attach_ok(port, timeout_ms=timeout_ms)
+    if ok:
+        return True, why
+
+    if not port_open(port, timeout=0.5):
+        return False, why          # 안 떠 있는 것. 여기서 다룰 일이 아니다.
+
+    say(f"[Chrome] {key} 가 떠 있는데 붙지 못합니다 ({why[:60]}) — 다시 켭니다")
+    killed, kmsg = kill_stuck_chrome(port)
+    say(f"[Chrome] {key} {kmsg}")
+    if not killed:
+        return False, f"{why} / 다시 켜지 못했습니다: {kmsg}"
+
+    res = r.ensure(key, wait_seconds=25)
+    if not (res.get("ok") and res.get("ready")):
+        return False, f"{why} / 다시 켰지만 준비되지 않았습니다: {res.get('message', '')}"
+
+    ok2, why2 = cdp_attach_ok(port, timeout_ms=timeout_ms)
+    if ok2:
+        say(f"[Chrome] {key} 다시 켜서 붙었습니다 · {why2}")
+        return True, why2
+    return False, f"다시 켰는데도 붙지 못합니다: {why2}"
+
+
 def devtools_active_port(profile_dir: Path) -> int | None:
     """
     <user-data-dir>/DevToolsActivePort 첫 줄 = Chrome 이 실제로 연 디버그 포트.
@@ -336,6 +383,54 @@ def port_owner_user_data_dir(port: int, force: bool = False) -> str | None:
             udd = m.group(1).rstrip("\\/")
     _OWNER_CACHE[int(port)] = (now, udd)
     return udd
+
+
+def port_owner_pid(port: int) -> int | None:
+    """이 포트를 LISTEN 중인 프로세스 번호."""
+    if not sys.platform.startswith("win"):
+        return None
+    ps = (f"(Get-NetTCPConnection -LocalPort {int(port)} -State Listen "
+          f"-ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess")
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, timeout=8,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        v = (out.stdout or "").strip()
+        return int(v) if v.isdigit() else None
+    except Exception:
+        return None
+
+
+def kill_stuck_chrome(port: int) -> tuple[bool, str]:
+    """
+    그 포트를 잡고 있는 Chrome 을 닫는다. 반환 (닫았나, 설명).
+
+    ⚠️ '반쯤 죽은' Chrome 전용이다 -- HTTP 는 200 인데 CDP 핸드셰이크가 안 끝나는
+       상태. 그 Chrome 은 이미 봇이 못 쓰고, 사람이 창을 닫고 다시 켜야만 풀린다.
+       매일 아침 사람이 그걸 하고 있을 수는 없다.
+       (2026-09-02 / 09-05 / 09-07 모두 GLOBAL 9530 에서 MRT 오픈이 통째로 실패)
+
+    프로필은 디스크에 남으므로 로그인은 그대로다. 열려 있던 탭만 없어지는데,
+    봇은 어차피 자기가 필요한 주소로 다시 들어간다.
+    """
+    pid = port_owner_pid(port)
+    if not pid:
+        return False, f"port {port} 를 잡고 있는 프로세스를 찾지 못했습니다"
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                       capture_output=True, text=True, timeout=15,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as e:
+        return False, f"닫지 못했습니다: {str(e)[:60]}"
+    # 포트가 실제로 풀릴 때까지 잠깐 기다린다
+    for _ in range(20):
+        time.sleep(0.5)
+        if not port_open(port, timeout=0.3):
+            _OWNER_CACHE.pop(int(port), None)
+            return True, f"PID {pid} 를 닫았습니다"
+    _OWNER_CACHE.pop(int(port), None)
+    return True, f"PID {pid} 에 닫기를 보냈지만 port {port} 가 아직 열려 있습니다"
 
 
 def _same_dir(a, b) -> bool:

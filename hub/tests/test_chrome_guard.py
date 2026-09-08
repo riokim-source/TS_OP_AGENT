@@ -59,10 +59,13 @@ for p, name in ((ROOT / "hub" / "core" / "close" / "runner.py", "마감"),
                 (ROOT / "hub" / "core" / "opens" / "mrt_open.py", "MRT 오픈"),
                 (ROOT / "hub" / "core" / "opens" / "gg_open.py", "GG 오픈"),
                 (ROOT / "hub" / "core" / "opens" / "klook_open.py", "Klook 오픈")):
-    has = "cdp_attach_ok(" in p.read_text(encoding="utf-8", errors="replace")
+    src = p.read_text(encoding="utf-8", errors="replace")
+    # cdp_ready_or_restart 는 cdp_attach_ok 로 붙어보고, 안 되면 다시 켠다.
+    # 둘 중 뭘 쓰든 '진짜 붙어봤다' 는 만족한다. (HTTP 만 보는 cdp_ready 는 안 된다)
+    has = "cdp_attach_ok(" in src or "cdp_ready_or_restart(" in src
     print(f"     {name:10} {'확인함' if has else '!! 안 함'}")
     if not has:
-        bad.append(f"{name}: cdp_attach_ok 를 안 부른다")
+        bad.append(f"{name}: CDP 로 진짜 붙어보지 않는다")
 
 # 꺼진 포트는 빨리 False 여야 한다 (오래 매달리면 의미가 없다)
 import time  # noqa: E402

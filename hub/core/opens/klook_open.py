@@ -16,7 +16,7 @@ hub 가 하는 일은 두 가지뿐이다:
 from __future__ import annotations
 
 from ..paths import klook_open_dir, ensure_on_syspath
-from ..routing import get_routing, cdp_attach_ok
+from ..routing import get_routing, cdp_ready_or_restart
 
 
 def available() -> tuple[bool, str]:
@@ -226,11 +226,12 @@ def preflight(job, regions) -> list[str]:
                 job.log("SYS", f"[오류] {key}: {res.get('message', '부팅 실패')}")
                 logged_out.append(region)
                 continue
-        ok_cdp, why = cdp_attach_ok(r.profile_port(key))
+        ok_cdp, why = cdp_ready_or_restart(r, key, job.log)
         if not ok_cdp:
-            job.log("SYS", f"[오류] {key}: Chrome 은 떠 있는데 봇이 붙지 못합니다 "
+            job.log("SYS", f"[오류] {key}: Chrome 에 붙지 못했습니다 "
                            f"(port {r.profile_port(key)}) — {why}. "
-                           f"그 Chrome 창을 닫고 다시 켠 뒤 실행하세요.")
+                           f"봇이 다시 켜는 것까지 해봤지만 안 됐습니다. "
+                           f"그 Chrome 창을 직접 닫고 다시 켠 뒤 실행하세요.")
             logged_out.append(region)
             continue
         try:
