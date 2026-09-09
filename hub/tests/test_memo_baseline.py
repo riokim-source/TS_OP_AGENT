@@ -97,8 +97,13 @@ def build_panels() -> list[dict]:
 
 def main() -> int:
     if not XLSX.exists():
-        print(f"기준 예약파일이 없습니다: {XLSX}")
-        return 2
+        # ⚠️ 이 검사는 실제 예약 엑셀을 기준으로 메모를 대조한다. 그 파일에는
+        #    손님 정보가 들어 있어 팀원 배포본에는 일부러 넣지 않는다.
+        #    없다고 '실패' 로 두면 팀원이 검사를 돌릴 때마다 헛되이 빨간불이
+        #    뜨고, 그러면 진짜 실패도 같이 무시하게 된다. 건너뛴다.
+        print(f"건너뜀 — 기준 예약파일이 없습니다 ({XLSX.name}).")
+        print("        이 검사는 그 파일이 있는 PC 에서만 돕니다.")
+        return 0
     panels = build_panels()
     ok = True
     for label, is_op, want in (("OFFICE", False, WANT_OFFICE), ("OP", True, WANT_OP)):
