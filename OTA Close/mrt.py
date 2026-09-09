@@ -1967,40 +1967,37 @@ def set_target_date_inventory(page: Page, total: int = 0, split: bool = False,
     # 인원 셀 = <input name="stockBundles.X.stocks.N.remainQuantity">.
     # N = 요일 인덱스 (일=0..토=6). 한 컬럼에 여러 옵션 (X=0,1,2,...) 있을 수도.
     # target weekday 와 일치하는 N 의 input 들만 정확히 식별.
-    # === 셀 선택: '요일 인덱스(stocks.N)' 대신 '화면의 날짜 열 x좌표' 기준 ===
+    # === 셀 선택: '요일 인덱스(stocks.N)' 대신 '화면의 날짜 열' 기준 ===
     # MRT 는 stocks.N 인덱스가 렌더마다 바뀌고(0~6 ↔ 7~13) 두 주가 겹쳐 뜨기도 해서
-    # 하드코딩 인덱스는 엉뚱한 날을 가리킬 수 있음. 날짜 숫자 헤더("3" 등)의 x좌표를
-    # 앵커로, 그 열 아래 '보이는' 입력칸만 고른다 (WYSIWYG). day_number 로 타깃 날짜 전달.
-    day_number = target_day_number()
+    # 하드코딩 인덱스는 엉뚱한 날을 가리킬 수 있음. 화면에 보이는 날짜 열 아래의
+    # '보이는' 입력칸만 고른다 (WYSIWYG).
+    #
+    # ⚠️ 날짜 열은 위에서 get_calendar_date_column() 이 이미 찾아 놨다(col).
+    #    예전에는 그걸 버리고 여기서 다시 찾았는데, 그때 쓰던 잣대가
+    #    '너비 120~340px' 이라는 고정 숫자였다. 창 크기와 확대율에 따라 열 너비가
+    #    매일 달라지는데(실측 targetX 가 1064~2404 로 널뛴다) 좁게 뜬 날은
+    #    전부 탈락해서 '날짜열 헤더 못 찾음' 이 됐다.
+    #    (2026-09-09 오픈: 열 너비 102px → 6~12일 전 컬럼 탈락, MRT 4건 전멸)
+    #    같은 것을 두 벌의 다른 잣대로 찾을 이유가 없다. 찾아 둔 것을 그대로 쓴다.
+    #
+    # ⚠️ 범위도 '중심에서 ±95px' 이 아니라 그 열의 실제 좌우 경계를 쓴다.
+    #    열이 102px 로 좁게 뜨면 ±95 는 옆 날짜까지 삼킨다. 엉뚱한 날에 재고가 열린다.
     cells_and_diag = page.evaluate(
-        """(dayNumber) => {
+        """(col) => {
             document.querySelectorAll('[data-bot-cell]').forEach(el => el.removeAttribute('data-bot-cell'));
             const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
             const all = Array.from(document.querySelectorAll(
                 'input[name^="stockBundles."][name$=".remainQuantity"]'
             ));
-            // 1) 날짜 숫자 헤더에서 타깃 날짜 열의 x중심 찾기 (캘린더 컬럼 폭 ~150~320px)
-            const dayCells = Array.from(document.querySelectorAll('th,td,div,span,button'))
-                .map(el => { const r = el.getBoundingClientRect();
-                    return {t: norm(el.innerText || el.textContent || ''),
-                            x: r.x + r.width/2, y: r.y, w: r.width, h: r.height}; })
-                .filter(o => o.t === String(dayNumber) && o.w > 120 && o.w < 340
-                             && o.h >= 26 && o.h <= 70 && o.y < 900)
-                .sort((a, b) => a.y - b.y);
-            if (dayCells.length === 0) {
-                return {cells: [], diag: {error: 'date-header-not-found', total_inputs: all.length}};
-            }
-            const targetX = dayCells[0].x;
-            const headerY = dayCells[0].y;
-            // 2) 타깃 날짜 열 아래(headerY 이하) '보이는' remainQuantity 입력만 선택
+            // 타깃 날짜 열 아래(headerY 이하) '보이는' remainQuantity 입력만 선택
             const out = [];
             all.forEach((el, i) => {
                 if (!el.offsetParent) return;                 // 안 보이면 제외
                 const r = el.getBoundingClientRect();
                 if (r.width <= 0 || r.height <= 0) return;
                 const cx = r.x + r.width/2;
-                if (r.y < headerY - 5) return;                // 헤더 위 영역 제외
-                if (Math.abs(cx - targetX) > 95) return;      // 타깃 날짜 열이 아니면 제외
+                if (r.y < col.y - 5) return;                  // 헤더 위 영역 제외
+                if (cx < col.x1 - 4 || cx > col.x2 + 4) return;   // 그 열 밖이면 제외
                 const tag = '__bot_cell_' + i + '_' + Date.now();
                 el.setAttribute('data-bot-cell', tag);
                 // 이 입력칸이 어느 '줄' 인지 = 인원구분(성인/소인) + 코스 + 출발.
@@ -2015,20 +2012,16 @@ def set_target_date_inventory(page: Page, total: int = 0, split: bool = False,
                           text: el.value || el.placeholder || '0'});
             });
             return {cells: out, diag: {total_inputs: all.length,
-                    targetX: Math.round(targetX), headerY: Math.round(headerY),
-                    matched: out.length}};
+                    x1: Math.round(col.x1), x2: Math.round(col.x2),
+                    headerY: Math.round(col.y), matched: out.length}};
         }""",
-        day_number,
+        {"x1": col["x1"], "x2": col["x2"], "y": col["y"]},
     )
     cells = cells_and_diag.get("cells", [])
     diag = cells_and_diag.get("diag", {})
-    if diag.get("error"):
-        print(f"[진단] 날짜열 헤더('{day_number}') 못 찾음 → 전체 input={diag.get('total_inputs')} "
-              f"(주차 표시/렌더 확인 필요)")
-    else:
-        print(f"[진단] 날짜열 앵커: day={day_number} targetX={diag.get('targetX')} "
-              f"headerY={diag.get('headerY')} 전체 input={diag.get('total_inputs')} "
-              f"매칭={len(cells)}개")
+    print(f"[진단] 날짜열 앵커: day={day} x={diag.get('x1')}~{diag.get('x2')} "
+          f"(너비 {int(col['width'])}) headerY={diag.get('headerY')} "
+          f"전체 input={diag.get('total_inputs')} 매칭={len(cells)}개")
 
     if not cells:
         raise Exception(f"{target_date_label()} 날짜 컬럼에서 수정할 인원 셀을 찾지 못했습니다.")
