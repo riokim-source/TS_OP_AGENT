@@ -34,6 +34,7 @@ try:
 except Exception:
     pass
 
+import json as _json
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -51,6 +52,7 @@ from shared.chrome_setup import connect_and_setup, close_worker_page
 from shared.health import ensure_chrome
 from shared.logger import get_agency_logger
 from shared.types import Result
+import vi_targets
 
 def _routed_port(region: str, channel: str, fallback: int) -> int:
     """hub 라우팅이 있으면 그 포트를, 없으면 기존 값을 쓴다."""
@@ -73,6 +75,9 @@ LOG = get_agency_logger("VI")
 PORT = _routed_port("KOREA", "VI", 9530)
 LAUNCHER_BAT = "start_chrome_global.bat"
 AVAILABILITY_URL = "https://supplier.viator.com/availability/"
+
+# hub 가 결과표에 한 줄씩 남기려고 읽는 표시. 로그 사이에 섞여 나온다.
+RESULT_MARKER = "##VI_RESULT##"
 
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -295,7 +300,39 @@ def wait_for_target_section(page: Page, target: date, max_wait_s: float = 6.0) -
 # ============================================================
 # 3. Sold out 클릭 + 3중 안전 가드
 # ============================================================
+# 누를 수 있는 것은 이 둘뿐이다. 'Not operating' 은 절대 들어오지 못한다.
+#   Sold out  : 판매중 -> 마감
+#   Available : 마감됨 -> 오픈
+# (실제 화면의 선택지는 늘 두 개다. 판매중이면 ['Not operating','Sold out'],
+#  마감됐으면 ['Not operating','Available'] — 실제 로그로 확인)
+MARK_CLOSE = "Sold out"
+MARK_OPEN = "Available"
+ALLOWED_MARKS = (MARK_CLOSE, MARK_OPEN)
+
+
 def find_and_click_sold_out(page: Page, target: date, dry_run: bool, _retry: int = 0) -> str:
+    """마감: target 날짜를 'Sold out' 으로."""
+    return find_and_click_mark(page, target, dry_run, MARK_CLOSE, _retry)
+
+
+def find_and_click_available(page: Page, target: date, dry_run: bool, _retry: int = 0) -> str:
+    """오픈: target 날짜를 'Available' 로 (마감 해제)."""
+    return find_and_click_mark(page, target, dry_run, MARK_OPEN, _retry)
+
+
+def find_and_click_mark(page: Page, target: date, dry_run: bool,
+                        want: str, _retry: int = 0) -> str:
+    """
+    target 날짜 칸의 'want' 링크를 찾아 누른다. 마감과 오픈이 같은 길을 쓴다.
+
+    ⚠️ 안전 가드는 그대로 두고 하나 더 얹었다 (가드 0). want 로 넘어올 수 있는
+       값을 두 개로 못박는다. 실수로든 남의 코드로든 'Not operating' 이
+       여기까지 오면 그 자리에서 터진다 — 그건 예약 취소를 뜻한다.
+    """
+    # ==== 안전 가드 0 : 누를 수 있는 글자인가 ====
+    if want not in ALLOWED_MARKS:
+        raise RuntimeError(f"안전 가드 발동: 누를 수 없는 항목 '{want}' "
+                           f"(허용: {', '.join(ALLOWED_MARKS)})")
     target_text = header_text_for(target)
 
     handle = page.evaluate_handle(
@@ -305,10 +342,10 @@ def find_and_click_sold_out(page: Page, target: date, dry_run: bool, _retry: int
             );
             if (!els.length) return null;
             const heading = els[0].closest('[class*="heading"]') || els[0].parentElement;
-            const soldOut = Array.from(heading.querySelectorAll('a, button')).find(el =>
-                (el.textContent||'').trim() === 'Sold out'
+            const hit = Array.from(heading.querySelectorAll('a, button')).find(el =>
+                (el.textContent||'').trim() === '{want}'
             );
-            return soldOut || null;
+            return hit || null;
         }}"""
     )
     elem = handle.as_element()
@@ -325,11 +362,11 @@ def find_and_click_sold_out(page: Page, target: date, dry_run: bool, _retry: int
         # evaluate 시점에 이미 detach 됐다면 짧게 대기 후 재조회
         if _retry < 2 and "not attached" in str(e).lower():
             page.wait_for_timeout(700)
-            return find_and_click_sold_out(page, target, dry_run, _retry=_retry + 1)
+            return find_and_click_mark(page, target, dry_run, want, _retry=_retry + 1)
         raise
     # ==== 안전 가드 1 ====
-    if text != "Sold out":
-        raise RuntimeError(f"안전 가드 발동: textContent='{text}' (expected 'Sold out')")
+    if text != want:
+        raise RuntimeError(f"안전 가드 발동: textContent='{text}' (expected '{want}')")
     # ==== 안전 가드 2 ====
     if "operating" in text.lower():
         raise RuntimeError(f"안전 가드 발동: 'operating' 감지 → '{text}'")
@@ -348,7 +385,7 @@ def find_and_click_sold_out(page: Page, target: date, dry_run: bool, _retry: int
     except Exception as e:
         if _retry < 2 and "not attached" in str(e).lower():
             page.wait_for_timeout(700)
-            return find_and_click_sold_out(page, target, dry_run, _retry=_retry + 1)
+            return find_and_click_mark(page, target, dry_run, want, _retry=_retry + 1)
         raise
     if not in_target_section:
         raise RuntimeError(f"안전 가드 발동: 클릭 대상이 '{target_text}' 섹션 외부")
@@ -363,7 +400,7 @@ def find_and_click_sold_out(page: Page, target: date, dry_run: bool, _retry: int
         if _retry < 2 and "not attached" in str(e).lower():
             LOG.info("[VI] stale element 감지 → 재조회 재시도 (retry=%d)", _retry + 1)
             page.wait_for_timeout(800)
-            return find_and_click_sold_out(page, target, dry_run, _retry=_retry + 1)
+            return find_and_click_mark(page, target, dry_run, want, _retry=_retry + 1)
         raise
     page.wait_for_timeout(1500)
     return "CLICKED"
@@ -559,10 +596,47 @@ def check_select_all(page: Page) -> bool:
 
 
 def get_all_product_codes(page: Page) -> list[dict]:
+    """드롭다운에 있는 상품 전부. (실제로 도는 것은 get_target_products 를 쓴다)"""
     return page.evaluate(
         """() => Array.from(document.querySelectorAll('input[data-automation^="product-filter-"]'))
             .map(i => ({code: i.name, label: (i.closest('label')?.textContent||'').trim().slice(0,120)}))"""
     )
+
+
+def get_target_products(page: Page) -> list[dict]:
+    """
+    우리가 매일 다루는 상품만 고른다 (vi_targets.VI_TARGETS).
+
+    ⚠️ 예전에는 드롭다운에 있는 것을 전부(99개) 돌았다. 실제로 여닫는 건
+       14개뿐인데 나머지를 도느라 마감이 20분 걸렸고, '안 파는 상품' 스킵이
+       63건씩 쌓여 그 안에 진짜 실패가 묻혔다 (2026-09-09).
+
+    ⚠️ 목록에 있는데 화면에 없는 번호는 반드시 남긴다. 상품이 내려갔거나
+       번호가 바뀐 것인데, 조용히 넘어가면 그 상품은 영영 안 닫힌다.
+       순서는 목록에 적어 둔 순서를 따른다 (한국 -> 일본 -> 호주).
+    """
+    on_screen = {p["code"]: p for p in get_all_product_codes(page)}
+    picked: list[dict] = []
+    missing: list[str] = []
+    for code in vi_targets.codes():
+        p = on_screen.get(code)
+        if p is None:
+            missing.append(code)
+            continue
+        picked.append({"code": code,
+                       "label": p.get("label") or vi_targets.label_of(code)})
+    LOG.info("[대상] 화면 %d개 중 우리 상품 %d개 (목록 %d개)",
+             len(on_screen), len(picked), len(vi_targets.codes()))
+    for code in missing:
+        LOG.warning("[대상] %s %s — 화면(드롭다운)에 없습니다. 상품이 내려갔거나 "
+                    "번호가 바뀌었는지 확인하세요.", code, vi_targets.label_of(code))
+    if missing:
+        _TARGETS_MISSING.extend(missing)
+    return picked
+
+
+# 목록에 있는데 화면에 없던 번호. 실행 끝에 사유로 올린다.
+_TARGETS_MISSING: list[str] = []
 
 
 def check_one_product(page: Page, code: str) -> bool:
@@ -712,6 +786,190 @@ def _process_one_product(page: Page, target: date, dry_run: bool, p: dict, max_w
         return {"status": "fail", "reason": f"exception:{e}", "result": ""}
 
 
+def _say_result(code: str, label: str, status: str, reason: str,
+                retry: bool = False) -> None:
+    """hub 결과표에 남길 한 줄. 로그와 별개로 표시를 붙여 내보낸다."""
+    word = {"success": "오픈", "opened": "이미 열림",
+            "skip": "슬롯 없음", "fail": "실패"}.get(status, status)
+    memo = {"success": "Available 로 바꿨습니다",
+            "opened": "이미 판매중이라 그대로 뒀습니다",
+            "skip": f"그날 슬롯이 없습니다 ({reason})",
+            "fail": f"열지 못했습니다 ({reason})"}.get(status, reason)
+    if retry:
+        memo = "다시 해 봄 — " + memo
+    print(RESULT_MARKER + _json.dumps(
+        {"code": code, "label": label, "result": word, "memo": memo},
+        ensure_ascii=False), flush=True)
+
+
+def _open_one_product(page: Page, target: date, dry_run: bool, p: dict,
+                      max_wait_s: float = 8.0) -> dict:
+    """
+    한 상품 오픈. 마감(_process_one_product)과 같은 길을 반대로 간다.
+
+      status: success  - 'Available' 눌러서 열었다 / DRY-RUN
+              opened   - 이미 열려 있다 ('Sold out' 이 보인다 = 판매중)
+              skip     - 그날 슬롯이 없다 (no_section / no_slots)
+              fail     - 판단 불가 / 예외
+
+    ⚠️ 화면의 선택지는 늘 두 개다.
+         판매중  -> ['Not operating', 'Sold out']    (그래서 이미 열림)
+         마감됨  -> ['Not operating', 'Available']   (그래서 여기를 누른다)
+       둘 다 없으면 아직 덜 그려진 것이다. '열렸다' 고 단정하지 않는다.
+    """
+    code = p["code"]
+    try:
+        open_product_dropdown(page)
+        clear_all_filter(page)
+        if not check_one_product(page, code):
+            return {"status": "fail", "reason": "checkbox_missing", "result": ""}
+        # Apply 가 먹었는지 반드시 본다. 안 먹으면 이전 상품 화면을 이 상품의
+        # 것으로 읽는다 — 그 상태로 누르면 엉뚱한 상품이 열린다.
+        if not apply_filter(page):
+            LOG.warning("[%s] Apply 실패 — 이전 필터가 남아 있어 판단할 수 없다", code)
+            return {"status": "fail", "reason": "apply_failed", "result": ""}
+        info = wait_for_target_section(page, target, max_wait_s=max_wait_s)
+        if not info["has_target"]:
+            return {"status": "skip", "reason": info.get("reason", "?"),
+                    "result": "", "elapsed": info.get("elapsed", 0.0)}
+
+        opts = info["opts"]
+        if MARK_CLOSE in opts:
+            # 'Sold out' 을 누를 수 있다 = 지금 판매중이다 = 이미 열려 있다
+            return {"status": "opened", "reason": "already_open", "result": ""}
+        if MARK_OPEN not in opts:
+            # 둘 다 없다 = 아직 덜 그려졌다. 열렸다고 단정하지 않는다.
+            return {"status": "fail", "reason": "opts_incomplete", "result": "",
+                    "elapsed": info.get("elapsed", 0.0)}
+
+        result = find_and_click_available(page, target, dry_run)
+        if result in ("CLICKED", "DRY"):
+            return {"status": "success", "reason": "", "result": result}
+        return {"status": "fail", "reason": result, "result": ""}
+    except Exception as e:
+        return {"status": "fail", "reason": f"{type(e).__name__}: {e}", "result": ""}
+
+
+def run_open(target_date: Optional[date] = None, codes: Optional[list] = None,
+             dry_run: bool = False) -> Result:
+    """
+    Viator 오픈. 넘겨받은 상품 번호만 연다.
+
+    ⚠️ 무엇을 열지는 여기서 정하지 않는다. 라스트미닛 수집 결과(OP 텍스트)에
+       실제로 들어간 투어만 hub 가 골라서 번호로 넘겨준다. 여기서 14개를 전부
+       열어 버리면 그날 운영하지 않는 자리까지 팔린다.
+
+    마감과 달리 work-stealing 을 쓰지 않는다. 대상이 많아야 열몇 개라
+    나누는 비용이 더 크고, 순서대로 도는 편이 로그를 읽기 쉽다.
+    """
+    target = target_date or (datetime.now().date() + timedelta(days=1))
+    codes = [c for c in (codes or []) if c]
+    LOG.info("Viator 오픈 시작 | target=%s | 상품 %d개 | dry_run=%s",
+             target, len(codes), dry_run)
+    if not codes:
+        LOG.info("[VI] 열 상품이 없습니다.")
+        return Result(agency="VI", success=0, failed=0, skipped=0, errors=[])
+
+    if not ensure_chrome(PORT, LAUNCHER_BAT, wait_sec=10):
+        msg = f"Chrome on port {PORT} 가 살아있지 않습니다. {LAUNCHER_BAT} 를 먼저 실행하세요."
+        LOG.error(msg)
+        return Result(agency="VI", success=0, failed=0, skipped=0, errors=[msg])
+
+    try:
+        browser, context, page = connect_and_setup(PORT)
+    except Exception as e:
+        msg = f"Playwright connect 실패: {e}"
+        LOG.error(msg)
+        return Result(agency="VI", success=0, failed=0, skipped=0, errors=[msg])
+
+    page = _vi_get_or_create_tab(context, force_new=False)
+    try:
+        page.bring_to_front()
+    except Exception:
+        pass
+
+    success = opened = skipped = failed = 0
+    errors: list = []
+    retry_targets: list = []
+
+    try:
+        _vi_navigate_and_pick(page, target)
+
+        for i, code in enumerate(codes, 1):
+            label = vi_targets.label_of(code)
+            try:
+                res = _open_one_product(page, target, dry_run, {"code": code},
+                                        max_wait_s=8.0)
+            except Exception as e:
+                res = {"status": "fail", "reason": f"예외 {e}", "result": ""}
+            st = res["status"]
+            _say_result(code, label, st, res.get("reason", ""))
+            if st == "success":
+                success += 1
+                LOG.info("(%d/%d) %s | %s | %s", i, len(codes), code, label,
+                         "OPENED" if res["result"] == "CLICKED" else "DRY-RUN")
+            elif st == "opened":
+                opened += 1
+                LOG.info("(%d/%d) %s | %s | 이미 열려 있음", i, len(codes), code, label)
+            elif st == "skip":
+                skipped += 1
+                LOG.info("(%d/%d) %s | %s | 그날 슬롯 없음 (reason=%s)",
+                         i, len(codes), code, label, res.get("reason", "?"))
+                retry_targets.append((code, label, res.get("reason", "?")))
+            else:
+                failed += 1
+                LOG.warning("(%d/%d) %s | %s | 실패: %s",
+                            i, len(codes), code, label, res.get("reason", ""))
+                retry_targets.append((code, label, res.get("reason", "?")))
+
+        # 한 번 더 해 본다. 화면이 늦게 뜬 것뿐일 수 있다 (마감과 같은 이유).
+        if retry_targets and not dry_run:
+            LOG.info("[VI/open] 다시 해 보기: %d개", len(retry_targets))
+            for i, (code, label, prev) in enumerate(retry_targets, 1):
+                res = _open_one_product(page, target, dry_run, {"code": code},
+                                        max_wait_s=15.0)
+                st = res["status"]
+                _say_result(code, label, st, res.get("reason", ""), retry=True)
+                was_skip = prev in ("no_section", "no_slots")
+                if st in ("success", "opened"):
+                    if st == "success":
+                        success += 1
+                    else:
+                        opened += 1
+                    if was_skip:
+                        skipped = max(0, skipped - 1)
+                    else:
+                        failed = max(0, failed - 1)
+                    LOG.info("  (%d/%d) %s | %s | 회복 → %s", i, len(retry_targets),
+                             code, label,
+                             "OPENED" if st == "success" else "이미 열려 있음")
+                else:
+                    LOG.warning("  (%d/%d) %s | %s | 여전히 %s (reason=%s)",
+                                i, len(retry_targets), code, label, st,
+                                res.get("reason", "?"))
+                    if was_skip and st == "skip":
+                        # '봤는데 그날 슬롯이 없다' 는 스킵이 맞다.
+                        continue
+                    errors.append(f"{code} {label}: {res.get('reason', '')} "
+                                  f"(열지 못함, 수동 확인 필요)")
+    except Exception as e:
+        LOG.exception("[VI/open] 치명 오류: %s", e)
+        errors.append(f"open 치명: {e}")
+    finally:
+        try:
+            close_worker_page(page)
+        except Exception:
+            pass
+
+    for code in _TARGETS_MISSING:
+        errors.append(f"{code} {vi_targets.label_of(code)}: 화면(드롭다운)에 없음")
+
+    LOG.info("[VI/open] 열었음 %d / 이미열림 %d / 슬롯없음 %d / 실패 %d",
+             success, opened, skipped, failed)
+    return Result(agency="VI", success=success + opened, failed=failed,
+                  skipped=skipped, errors=errors[:30])
+
+
 def _vi_quarter_slice(products: list, quarter: str) -> list:
     """
     KKDAY/MRT 와 동일한 4-way 분할:
@@ -851,7 +1109,7 @@ def run_discover(target_date: Optional[date], dry_run: bool, output_file: str) -
             clear_all_filter(page)
         except Exception:
             pass
-        products = get_all_product_codes(page)
+        products = get_target_products(page)
         LOG.info("[DISCOVER] product %d 개 수집", len(products))
 
         # JSON 으로 저장
@@ -1208,7 +1466,7 @@ def run_close(target_date: Optional[date] = None, dry_run: bool = False) -> Resu
             clear_all_filter(page)
         except Exception:
             pass
-        products = get_all_product_codes(page)
+        products = get_target_products(page)
         LOG.info("[STEP 3] 드롭다운에서 product %d 개 발견", len(products))
 
         for i, p in enumerate(products, 1):
@@ -1256,7 +1514,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--date", default=None, help="YYYY-MM-DD")
-    ap.add_argument("--mode", choices=["all", "discover", "close", "auto"], default="auto",
+    ap.add_argument("--mode", choices=["all", "discover", "close", "open", "auto"], default="auto",
                     help="auto=플래그로 자동판정 / all=레거시 단일프로세스 / discover=STEP1+2+JSON / close=STEP3만 + work-stealing")
     ap.add_argument("--output", default=None, help="discover 모드: product 목록 JSON 저장 경로")
     ap.add_argument("--discover-file", default=None, help="close 모드: discover JSON 파일 경로")
@@ -1264,6 +1522,8 @@ if __name__ == "__main__":
                     help="close 모드: 4-way 분할")
     ap.add_argument("--claim-dir", default=None,
                     help="close 모드: work-stealing claim 디렉토리")
+    ap.add_argument("--codes", default=None,
+                    help="open 모드: 열 상품 번호를 콤마로 (예: 48881P43,48881P233)")
     args = ap.parse_args()
 
     tgt = None
@@ -1285,6 +1545,9 @@ if __name__ == "__main__":
             print("[VI] discover 모드는 --output 필요", file=sys.stderr)
             sys.exit(2)
         r = run_discover(tgt, dry_run=args.dry_run, output_file=args.output)
+    elif effective_mode == "open":
+        codes = [c.strip() for c in (args.codes or "").split(",") if c.strip()]
+        r = run_open(tgt, codes=codes, dry_run=args.dry_run)
     elif effective_mode == "close":
         if not args.discover_file:
             print("[VI] close 모드는 --discover-file 필요", file=sys.stderr)

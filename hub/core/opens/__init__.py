@@ -32,11 +32,10 @@ CAPABILITY: dict[str, str | None] = {
     "CP": None,      # Trip.com/Ctrip 은 마감 봇 자체가 없어서 오픈도 없음
 }
 
-IMPLEMENTED: set[str] = {"KLOOK", "MRT", "GG"}
+IMPLEMENTED: set[str] = {"KLOOK", "MRT", "GG", "VI"}
 
 NOT_IMPLEMENTED_REASON: dict[str, str] = {
     "KK": "KKday 판매 재개(Resume selling)는 kkday.py 의 Ceased selling 반대 동작 구현이 필요합니다.",
-    "VI": "Viator 는 Sold out 해제만 가능하며, 오클릭 위험 때문에 별도 안전가드가 필요합니다.",
     "CP": "Trip.com/Ctrip 은 마감 봇 자체가 없어 오픈도 아직 없습니다.",
 }
 

@@ -16,7 +16,7 @@ run_all.py
 """
 from __future__ import annotations
 
-from . import gg_open, klook_open, mrt_open
+from . import gg_open, klook_open, mrt_open, vi_open
 
 
 class _Counter:
@@ -85,6 +85,8 @@ def run_open(job, p: dict) -> None:
         runners.append(("MRT", lambda: mrt_open.run(job, mine, target, dry_run=dry)))
     if "GG" in channels and any(x["channel"] == "GG" for x in mine):
         runners.append(("GG", lambda: gg_open.run(job, mine, target, dry_run=dry)))
+    if "VI" in channels and any(x["channel"] == "VI" for x in mine):
+        runners.append(("VI", lambda: vi_open.run(job, mine, target, dry_run=dry)))
 
     failed: list[tuple[str, str]] = []
     ran: list[str] = []

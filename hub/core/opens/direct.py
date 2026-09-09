@@ -17,6 +17,8 @@ direct.py
 """
 from __future__ import annotations
 
+import re
+
 from . import CAPABILITY, IMPLEMENTED, NOT_IMPLEMENTED_REASON  # noqa: F401
 from ..productmap import get_map
 from . import klook_open
@@ -85,6 +87,15 @@ def catalog(channel: str) -> list[dict]:
         return [{"name": c["name"], "region": c.get("region", ""),
                  "id": str(c.get("id", "")), "workflow": c.get("workflow", "")}
                 for c in klook_open.catalog()]
+    if ch == "VI":
+        # Viator 는 productmap 이 아니라 vi_targets 가 목록의 주인이다.
+        from . import vi_open
+        vt = vi_open._targets()
+        if vt is None:
+            return []
+        return [{"name": t, "region": vt.region_of(code),
+                 "id": code, "workflow": "Available 로"}
+                for code in vt.codes() for t in vt.tours_of(code)]
     table = (get_map().data.get(ch) or {})
     out = []
     for name, entry in sorted(table.items()):
@@ -98,6 +109,21 @@ def text_to_plan(channel: str, text: str,
                  region: str = "") -> tuple[list[dict], list[str]]:
     """'상품명 수량' 여러 줄 -> 오픈 계획. 반환 (계획, 형식이 이상한 줄)."""
     ch = str(channel or "").upper()
+    if ch == "VI":
+        # Viator 는 수량이 없다. 이름만 적는 게 자연스럽다.
+        # 숫자를 적어도 막지 않고 그냥 무시한다 — 사람이 습관대로 적을 수 있다.
+        plan, bad = [], []
+        for raw in str(text or "").splitlines():
+            name = raw.strip()
+            if not name:
+                continue
+            name = re.sub(r"\s+\d+\s*$", "", name).strip()   # 뒤에 붙은 숫자 떼기
+            if not name:
+                bad.append(raw.strip())
+                continue
+            plan.append({"channel": "VI", "mode": "resume",
+                         "product": name, "qty": 0})
+        return plan, bad
     plan, bad = klook_open.text_to_plan(text)      # 형식 해석은 한 벌만 쓴다
     for p in plan:
         p["channel"] = ch
@@ -130,6 +156,19 @@ def preview(channel: str, plan: list[dict], target_date: str) -> dict:
                 "unknown": [u.get("text") for u in (pv.get("unknown") or [])],
                 "warnings": list(pv.get("warnings") or []),
                 "date_text": pv.get("date_text") or target_date}
+
+    if ch == "VI":
+        # Viator 는 수량이 없다. 그날 날짜를 'Available' 로 바꾸는 것뿐이라
+        # 숫자를 적어도 무시한다. 이름 -> 상품 번호는 vi_targets 가 정한다.
+        from . import vi_open
+        pv = vi_open.resolve(plan)
+        rows = [{"지역": "", "상품": ", ".join(it["tours"]),
+                 "수량": "-", "방식": f"{it['code']} · Available 로", "": ""}
+                for it in pv.get("items") or []]
+        return {"rows": rows,
+                "unknown": [u["tour"] for u in (pv.get("unmapped") or [])],
+                "warnings": ([pv["error"]] if pv.get("error") else []),
+                "date_text": target_date}
 
     if ch in NEEDS_REGION:
         # 맵핑표를 쓰지 않는다. 이름은 화면에서 찾으므로 여기서 확인할 수 없다.
