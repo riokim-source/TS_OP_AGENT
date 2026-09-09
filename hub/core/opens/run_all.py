@@ -16,7 +16,7 @@ run_all.py
 """
 from __future__ import annotations
 
-from . import gg_open, klook_open, mrt_open, vi_open
+from . import gg_open, klook_open, mrt_open, tpc_open, vi_open
 
 
 class _Counter:
@@ -87,6 +87,9 @@ def run_open(job, p: dict) -> None:
         runners.append(("GG", lambda: gg_open.run(job, mine, target, dry_run=dry)))
     if "VI" in channels and any(x["channel"] == "VI" for x in mine):
         runners.append(("VI", lambda: vi_open.run(job, mine, target, dry_run=dry)))
+    # 라스트미닛 메모에서 이 OTA 는 [CP] 로 찍힌다. 봇 이름은 TPC 다.
+    if "CP" in channels and any(x["channel"] == "CP" for x in mine):
+        runners.append(("CP", lambda: tpc_open.run(job, mine, target, dry_run=dry)))
 
     failed: list[tuple[str, str]] = []
     ran: list[str] = []

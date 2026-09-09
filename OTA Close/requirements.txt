@@ -1,1 +1,6 @@
 playwright>=1.44.0
+
+# TPC(Trip.com) 봇이 Chrome 페이지 타깃에 직접 붙을 때 쓴다.
+# 같은 Chrome 에 응답 없는 탭이 있으면 Playwright 의 브라우저 전체 attach 가
+# 통째로 타임아웃난다 (OTA Close/shared/cdp_page.py 설명 참고).
+websockets>=12.0

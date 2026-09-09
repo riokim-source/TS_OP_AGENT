@@ -25,6 +25,7 @@ from . import klook_open
 
 # 이름을 어디서 가져오나
 NAME_SOURCE = {
+    "CP": "tpc_targets",      # TPC 는 tpc_targets.py 의 내부명칭
     "KLOOK": "packages",      # Klook 패키지 이름
     "MRT": "productmap",
     "KK": "productmap",
@@ -48,7 +49,7 @@ NEEDS_REGION = {"GG"}
 GG_REGIONS = ["KOREA", "JAPAN", "AUSTRALIA", "UK"]
 
 CHANNEL_LABEL = {"KLOOK": "Klook", "MRT": "MyRealTrip", "GG": "GetYourGuide",
-                 "KK": "KKday", "VI": "Viator", "CP": "Trip.com/Ctrip"}
+                 "KK": "KKday", "VI": "Viator", "CP": "TPC (Trip.com)"}
 
 
 def channels() -> list[dict]:
@@ -59,7 +60,7 @@ def channels() -> list[dict]:
     안 되는 것도 이유와 함께 보여준다.
     """
     out = []
-    for ch in ("KLOOK", "MRT", "GG", "KK", "VI"):
+    for ch in ("KLOOK", "MRT", "GG", "KK", "VI", "CP"):
         n = len(catalog(ch))
         out.append({
             "channel": ch,
@@ -87,6 +88,15 @@ def catalog(channel: str) -> list[dict]:
         return [{"name": c["name"], "region": c.get("region", ""),
                  "id": str(c.get("id", "")), "workflow": c.get("workflow", "")}
                 for c in klook_open.catalog()]
+    if ch == "CP":
+        # TPC 도 productmap 이 아니라 tpc_targets 가 목록의 주인이다.
+        from . import tpc_open
+        tt = tpc_open._targets()
+        if tt is None:
+            return []
+        return [{"name": t["name"], "region": t["region"],
+                 "id": t["product_id"], "workflow": "Open sales 로"}
+                for t in tt.TARGETS]
     if ch == "VI":
         # Viator 는 productmap 이 아니라 vi_targets 가 목록의 주인이다.
         from . import vi_open
@@ -109,8 +119,8 @@ def text_to_plan(channel: str, text: str,
                  region: str = "") -> tuple[list[dict], list[str]]:
     """'상품명 수량' 여러 줄 -> 오픈 계획. 반환 (계획, 형식이 이상한 줄)."""
     ch = str(channel or "").upper()
-    if ch == "VI":
-        # Viator 는 수량이 없다. 이름만 적는 게 자연스럽다.
+    if ch in ("VI", "CP"):
+        # Viator 와 TPC 는 수량이 없다. 이름만 적는 게 자연스럽다.
         # 숫자를 적어도 막지 않고 그냥 무시한다 — 사람이 습관대로 적을 수 있다.
         plan, bad = [], []
         for raw in str(text or "").splitlines():
@@ -121,7 +131,7 @@ def text_to_plan(channel: str, text: str,
             if not name:
                 bad.append(raw.strip())
                 continue
-            plan.append({"channel": "VI", "mode": "resume",
+            plan.append({"channel": ch, "mode": "resume",
                          "product": name, "qty": 0})
         return plan, bad
     plan, bad = klook_open.text_to_plan(text)      # 형식 해석은 한 벌만 쓴다
@@ -156,6 +166,18 @@ def preview(channel: str, plan: list[dict], target_date: str) -> dict:
                 "unknown": [u.get("text") for u in (pv.get("unknown") or [])],
                 "warnings": list(pv.get("warnings") or []),
                 "date_text": pv.get("date_text") or target_date}
+
+    if ch == "CP":
+        # TPC 도 수량이 없다. 그날 날짜를 'Open sales' 로 바꾸는 것뿐이다.
+        from . import tpc_open
+        pv = tpc_open.resolve(plan)
+        rows = [{"지역": it["region"], "상품": ", ".join(it["tours"]),
+                 "수량": "-", "방식": f"{it['product_id']} · Open sales 로", "": ""}
+                for it in pv.get("items") or []]
+        return {"rows": rows,
+                "unknown": [u["tour"] for u in (pv.get("unmapped") or [])],
+                "warnings": ([pv["error"]] if pv.get("error") else []),
+                "date_text": target_date}
 
     if ch == "VI":
         # Viator 는 수량이 없다. 그날 날짜를 'Available' 로 바꾸는 것뿐이라

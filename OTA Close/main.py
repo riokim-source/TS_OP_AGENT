@@ -43,10 +43,15 @@ LOG = get_logger("main")
 
 IMMEDIATE_MODE = False
 
-BOT_ORDER = ["kkday", "vi", "mrt", "klook", "gg"]
+BOT_ORDER = ["kkday", "vi", "mrt", "klook", "gg", "tpc"]
 
 # 지역 마켓이 있는 봇 (KOREA/JAPAN/AUSTRALIA/UK 로 필터 가능)
-REGION_BOTS = ["kkday", "klook", "gg"]
+#
+# TPC(Trip.com) 는 지역이 있지만 **쪼개지 않는다**. PARALLEL_BY_REGION 에도,
+# SPLIT_* 에도 넣지 않아서 프로세스 하나가 상품을 순서대로 처리한다.
+# 한국·일본이 같은 Chrome(9522) 을 쓰는데 워커를 나누면 같은 탭을 서로 잡고,
+# vBooking 은 Submit 이 무거워서 동시에 두드리면 그대로 느려진다.
+REGION_BOTS = ["kkday", "klook", "gg", "tpc"]
 # 지역 구분이 없는 글로벌 봇 (include_global=True 인 시간대에만 실행)
 GLOBAL_BOTS = ["vi", "mrt"]
 

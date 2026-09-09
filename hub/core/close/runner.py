@@ -23,16 +23,24 @@ from ..paths import ota_close_dir
 from .. import kkday_codes
 from ..routing import get_routing, cdp_ready_or_restart
 
-AGENCIES = ["klook", "kkday", "gg", "vi", "mrt"]
+AGENCIES = ["klook", "kkday", "gg", "vi", "mrt", "tpc"]
 
 # 마감 봇 코드 -> 라우팅 채널 코드
-AGENCY_CHANNEL = {"klook": "KLOOK", "kkday": "KK", "gg": "GG", "vi": "VI", "mrt": "MRT"}
+# 마감 봇 코드 -> 라우팅 채널 코드
+#
+# ⚠️ TPC(Trip.com) 는 봇 이름과 라우팅 key 가 다르다. 화면·봇에서 부르는 이름은
+#    TPC 이고, 라우팅표/라스트미닛 계산의 key 는 예전부터 CP 다
+#    (hub/core/lastmin/constants.py 의 CHANNELS). key 를 바꾸면 예약 파일
+#    매핑까지 따라 바뀌므로 여기서만 이어 준다.
+AGENCY_CHANNEL = {"klook": "KLOOK", "kkday": "KK", "gg": "GG", "vi": "VI",
+                  "mrt": "MRT", "tpc": "CP"}
 AGENCY_REGIONS = {
     "klook": ["KOREA", "JAPAN", "AUSTRALIA", "UK"],
     "kkday": ["KOREA", "JAPAN", "AUSTRALIA", "UK"],
     "gg": ["KOREA", "JAPAN", "AUSTRALIA", "UK"],
     "vi": ["KOREA"],     # 글로벌 계정 1개 -> 대표로 KOREA 라우팅을 본다
     "mrt": ["KOREA"],
+    "tpc": ["KOREA", "JAPAN", "AUSTRALIA"],   # UK 는 Trip.com 판매 없음
 }
 
 # 라우팅은 짧은 이름(KR/JP/AU/UK), 마감 봇은 긴 이름(KOREA/...) 을 쓴다.
@@ -46,7 +54,7 @@ _RESULT_RE = re.compile(r"\[([^\]]+)\]\s*success=(\d+)\s*failed=(\d+)\s*skipped=
 # 봇이 끝에 찍는 채널별 요약과 사유.
 #     [    GG] 성공 103 / 실패   1 / 스킵   0
 #                └─ ERROR: KOREA: page size 50 변경 실패
-_SUMMARY_RE = re.compile(r"\[\s*(KKDAY|KLOOK|GG|VI|MRT)\s*\]\s*성공")
+_SUMMARY_RE = re.compile(r"\[\s*(KKDAY|KLOOK|GG|VI|MRT|TPC)\s*\]\s*성공")
 _ERR_RE = re.compile(r"(?:└─\s*)?ERROR:\s*(.+)$")
 
 
@@ -88,7 +96,7 @@ class Tally:
         return {"channel": base, "item": label, "result": "집계",
                 "memo": f"성공 {m.group(2)} / 실패 {m.group(3)} / 스킵 {m.group(4)}"}
 
-    CHANNELS = ("KKDAY", "KLOOK", "GG", "VI", "MRT")
+    CHANNELS = ("KKDAY", "KLOOK", "GG", "VI", "MRT", "TPC")
 
     def failed_channels(self) -> dict[str, dict]:
         return {c: t for c, t in self.totals.items() if t.get("failed")}
@@ -287,8 +295,11 @@ def run(job, target_date: str, agencies: list[str], regions: list[str],
     # 패키지 0개를 처리하고 끝났는데, 그 4개가 지역 Chrome 을 점유하는 바람에
     # 같은 Chrome 을 쓰는 GG 가 페이지 로드 타임아웃으로 통째로 실패했다.
     # (2026-08-23: GG KOREA 전멸, 성공 46건은 전부 일본이었음)
+    #
+    # ⚠️ TPC 도 여기에 있어야 한다. 빠지면 화면에서 한 지역만 골라도 TPC 는
+    #    전 지역을 돈다 — 지역 필터가 조용히 풀리는 그 함정이다.
     for a in agencies:
-        if a not in ("klook", "kkday", "gg"):
+        if a not in ("klook", "kkday", "gg", "tpc"):
             continue
         allowed = allowed_by_agency[a]
         wanted = regions or AGENCY_REGIONS.get(a, [])

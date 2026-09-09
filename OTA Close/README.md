@@ -1,8 +1,11 @@
 # OTA Close Bot
 
-KKDAY / KLOOK / GetYourGuide(GG) / Viator(VI) / MyRealTrip(MRT) 5개 OTA 의 매일 마감 자동화.
+KKDAY / KLOOK / GetYourGuide(GG) / Viator(VI) / MyRealTrip(MRT) / TPC(Trip.com) 6개 OTA 의 매일 마감 자동화.
 
-Playwright 로 각 공급자 포털에 attach 해서, **다음날 신규 예약을 차단**(마감)한다.
+각 공급자 포털에 이미 로그인된 Chrome 에 붙어서, **다음날 신규 예약을 차단**(마감)한다.
+TPC 를 뺀 5개는 Playwright 로 붙고, TPC 는 페이지 타깃에 직접 붙는다
+(같은 Chrome 에 응답 없는 탭이 있으면 Playwright 의 브라우저 전체 attach 가 통째로
+타임아웃나기 때문 — `shared/cdp_page.py` 참고).
 
 ## 현재 상태
 
@@ -13,8 +16,54 @@ Playwright 로 각 공급자 포털에 attach 해서, **다음날 신규 예약�
 | GG    | supplier.getyourguide.com   | KOREA / JAPAN / AUSTRALIA / UK| 분할 없음        | -                                      |
 | VI    | supplier.viator.com         | GLOBAL                        | 4분할 (quarter)  | Availability → **Sold out** (4중 가드) |
 | MRT   | partner.myrealtrip.com      | GLOBAL                        | 4분할 (quarter)  | -                                      |
+| TPC   | vbooking.ctrip.com          | KOREA / JAPAN / AUSTRALIA     | 분할 없음        | On/off → Select All → Close sales → Set by Date → OK → **Submit** |
 
-5개 봇 모두 구현 완료, 운영 중.
+6개 봇 모두 구현 완료, 운영 중.
+
+### TPC (Trip.com / Ctrip) — 2026-09-09 추가
+
+지정 상품 10개(`tpc_targets.py`)만 매일 돈다. 두 가지가 다른 봇과 다르다.
+
+**1) 이중검색으로 들어간다**
+내부명칭으로 검색한 뒤, 그 결과 목록에서 지정된 상품번호 행을 골라 들어간다.
+이름만으로 첫 행을 쓰거나(`경주` 로 검색하면 12건이 나온다) 번호로 상품 수정 URL 에
+직행하면 안 된다. 둘이 서로를 검증한다. 하나라도 안 맞으면 **실패**로 남긴다.
+
+**2) 화면 글자로 찾지 않는다**
+2026-09-09 오후에 같은 계정 같은 Chrome 인데 vBooking UI 가 영어에서 중국어로 바뀌었다
+(`Search`→`查询`, `OK`→`确 定`, `Not now`→`稍后处理`). 그래서 버튼·상태를 전부 구조로 찾는다 —
+`.topSearchList button.ant-btn-primary`, `.ant-modal-footer` 의 primary/default,
+라디오 `value`, `button[role=switch]` 의 `aria-checked`, `.date-detail.empty`.
+`hub/tests/test_tpc.py` 가 글자 비교가 다시 들어오는지 검사한다.
+
+**3) OK 는 반영이 아니다**
+On/off 창의 OK 는 화면 안에서만 바꾼다. 화면 아래 **Submit** 까지 눌러야 서버에
+들어가고, 반영에 시간이 좀 걸린다. 그래서 Submit 뒤에 **새로고침해서 서버가 준 값**으로
+다시 읽어 검증한다.
+
+```bash
+python tpc.py --mode collect                  # 읽기 전용. 아무것도 바꾸지 않는다
+python tpc.py --mode close --dry-run          # OK 를 누르지 않고 계획만
+python tpc.py --mode close --date 2026-09-10
+python tpc.py --mode open  --targets 경주
+```
+
+마감은 `Select All` 로 그 상품의 패키지를 전부 고른다. 그날 안 파는 패키지는
+화면이 `Not set` 으로 두므로 손대지 않는다.
+
+⚠️ **`Select All` 이 화면의 모든 패키지는 아니다.** 이름에 `Invalid` 가 붙은 패키지는
+창 목록에 아예 안 나온다. 2026-09-09 감천미포가 화면 11개 / 창 10개였고, 빠진
+`H-日文导游 (早班)` 가 하필 그날 유일하게 열려 있던 패키지였다. 그대로 Submit 하면
+이미 닫힌 10개를 다시 닫고 '마감 완료' 모양만 남는다. 그래서 닫아야 할 패키지가 창에
+없으면 OK 를 누르지 않고 `PKG_UNSELECTABLE` 실패로 멈춘다.
+
+**오픈은 Select All 을 쓰지 않는다.** 그날 마감 로그(`logs/tpc_close_<날짜>_*.json`)에
+남은 패키지만 되연다. '지금 닫혀 있는 것' 을 다 열면 시즌이 지나 닫아 둔 패키지까지
+열린다 — 경주의 `A-中文导游 [十月 ~ 三月]` 는 9월에도 가격이 남은 채 닫혀 있다.
+마감 기록이 없으면 열지 않고 `NO_CLOSE_LOG` 로 멈춘다.
+
+호주 상품(Wollongong Kiama)은 한국 계정에 없다. 호주 Chrome(9524)이 떠 있어야 하고,
+안 떠 있으면 스킵이 아니라 `CHROME_DOWN` **실패**로 남는다.
 
 ## 구조: 지역 = Chrome 인스턴스 1개
 
@@ -42,6 +91,9 @@ OTA Close/
 ├── gg.py                  # GetYourGuide 봇
 ├── vi.py                  # Viator 봇  ← Sold out 만 클릭 (안전규칙 필독)
 ├── mrt.py                 # MyRealTrip 봇
+├── tpc.py                 # TPC(Trip.com) 봇  ← 마감 / 수집 / 오픈
+├── tpc_dom.py             # TPC 화면 찾기 (선택자는 여기 한 벌만)
+├── tpc_targets.py         # TPC 지정 상품 10개 (내부명칭 + 상품번호)
 ├── start_gui.bat          # GUI 실행
 ├── start_main.bat         # main.py 데몬 실행
 ├── start_all_chromes.bat  # 5개 지역 Chrome 한 번에 띄우기
@@ -53,7 +105,8 @@ OTA Close/
 │   ├── start_chrome_uk.bat         (9225)
 │   └── start_chrome_global.bat     (9230)
 ├── shared/
-│   ├── chrome_setup.py    # connect_and_setup(port)
+│   ├── chrome_setup.py    # connect_and_setup(port)  (Playwright)
+│   ├── cdp_page.py        # 페이지 타깃에 직접 붙기 (TPC 가 쓴다)
 │   ├── health.py          # 지역↔포트↔봇 매핑, 포트 헬스체크 + .bat 자동 부팅
 │   ├── logger.py          # 통합 로거
 │   ├── notify.py          # 결과 통지 (stdout + summary 파일)

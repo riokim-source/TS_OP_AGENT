@@ -33,7 +33,7 @@
       "KK": "KR",
       "GG": "KR",
       "VI": "GLOBAL",
-      "CP": null,
+      "CP": "KR",
       "MRT": "GLOBAL"
     },
     "JAPAN": {
@@ -41,7 +41,7 @@
       "KK": null,
       "GG": "JP",
       "VI": "GLOBAL",
-      "CP": null,
+      "CP": "KR",
       "MRT": "GLOBAL"
     },
     "AUSTRALIA": {
@@ -49,7 +49,7 @@
       "KK": null,
       "GG": "AU",
       "VI": "GLOBAL",
-      "CP": null,
+      "CP": "AU",
       "MRT": "GLOBAL"
     },
     "UK": {

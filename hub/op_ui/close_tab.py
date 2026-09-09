@@ -13,8 +13,21 @@ from core.close import runner as close_runner
 from core.routing import get_routing
 
 AGENCY_LABEL = {"klook": "Klook", "kkday": "KKday", "gg": "GetYourGuide",
-                "vi": "Viator", "mrt": "MyRealTrip"}
+                "vi": "Viator", "mrt": "MyRealTrip", "tpc": "TPC (Trip.com)"}
 REGIONS = ["KOREA", "JAPAN", "AUSTRALIA", "UK"]
+
+
+def _agency_label(a: str) -> str:
+    """
+    화면에 보일 이름. 모르는 것이 와도 화면이 죽지 않는다.
+
+    ⚠️ 마감 대상 목록의 주인은 close_runner.AGENCIES 이고, 이름표는 여기 있다.
+       두 곳이 갈라져 있어서 TPC 를 추가했을 때 이름표를 빠뜨렸고, 매일 쓰는
+       Last Minute 화면이 통째로 안 열렸다 (KeyError: 'tpc', 2026-09-09).
+       테스트는 전부 통과했다 — 화면을 그려 보는 검사가 없었기 때문이다.
+       이름표가 없으면 코드라도 보여주고 넘어간다. 화면이 죽는 것보다 낫다.
+    """
+    return AGENCY_LABEL.get(a) or str(a).upper()
 
 
 def render(lock) -> None:
@@ -31,7 +44,7 @@ def render(lock) -> None:
     agencies = []
     for col, a in zip(cols, close_runner.AGENCIES):
         with col:
-            if st.checkbox(AGENCY_LABEL[a], value=True, key=f"ag-{a}"):
+            if st.checkbox(_agency_label(a), value=True, key=f"ag-{a}"):
                 agencies.append(a)
 
     with st.expander("지역 지정 (비우면 전체)"):
@@ -127,7 +140,7 @@ def render(lock) -> None:
         lines = [
             f"**{target.isoformat()}** 날짜의 재고를 실제로 0 으로 만듭니다.",
             "",
-            "대상: " + ", ".join(AGENCY_LABEL[a] for a in agencies)
+            "대상: " + ", ".join(_agency_label(a) for a in agencies)
             + (f" / {', '.join(regions)}" if regions else " / 전체 지역"),
         ]
         if agent:

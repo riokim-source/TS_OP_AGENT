@@ -11,6 +11,8 @@ OTA 별 '오픈' 실행기.
   GG    : availability 벌크 Block/Unblock + capacity. 수량 개념은 있으나
           현재 마감 봇이 '페이지 단위 벌크' 라서 오픈은 상품 단위 루프가 필요.
   KK    : 세션 status 토글 (Ceased selling <-> Resume). 수량 제한 없음.
+  TPC   : (라우팅 key = CP) 날짜별 On/off 토글. 재고는 999 로 잡혀 있어
+          숫자를 받지 않는다. 마감/오픈이 같은 창의 Close/Open sales 다.
   VI    : Sold out 토글. 수량은 pricing schedule 에 묶여 있어 직접 못 정함.
           ⚠️ 'Not operating' 은 예약 취소 의미라 절대 건드리지 않는다.
 
@@ -29,14 +31,18 @@ CAPABILITY: dict[str, str | None] = {
     "GG": "qty",
     "KK": "resume",
     "VI": "resume",
-    "CP": None,      # Trip.com/Ctrip 은 마감 봇 자체가 없어서 오픈도 없음
+    # TPC(Trip.com/Ctrip). 라우팅표의 key 는 예전부터 CP 다.
+    #
+    # 수량이 아니라 판매 재개다. vBooking 은 날짜별 재고를 999 로 잡아 두고
+    # (화면에 "Sold inventory: 0/999") 실제로는 On/off 로만 운영한다.
+    # 2026-09-09 지정 상품 10개를 읽어서 확인했다. 그래서 숫자를 받지 않는다.
+    "CP": "resume",
 }
 
-IMPLEMENTED: set[str] = {"KLOOK", "MRT", "GG", "VI"}
+IMPLEMENTED: set[str] = {"KLOOK", "MRT", "GG", "VI", "CP"}
 
 NOT_IMPLEMENTED_REASON: dict[str, str] = {
     "KK": "KKday 판매 재개(Resume selling)는 kkday.py 의 Ceased selling 반대 동작 구현이 필요합니다.",
-    "CP": "Trip.com/Ctrip 은 마감 봇 자체가 없어 오픈도 아직 없습니다.",
 }
 
 
