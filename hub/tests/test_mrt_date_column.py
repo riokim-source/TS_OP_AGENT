@@ -1,28 +1,32 @@
 # -*- coding: utf-8 -*-
 """
-MRT 날짜 열을 '고정 픽셀 숫자' 로 찾지 않는지 검사.
+MRT 날짜 열을 화면 좌표가 아니라 '표의 구조' 로 찾는지 검사.
 
-2026-09-09 오픈에서 MRT 4건이 전멸했다.
+2026-09-09 오픈에서 MRT 4건이 전멸했다. 로그가 앞뒤로 모순됐다.
 
     [완료] 날짜 컬럼 확인: 10 / x=1060, y=676     <- 찾았다고 하고
     [진단] 날짜열 헤더('10') 못 찾음               <- 바로 뒤에 못 찾았다고 한다
 
-같은 열을 두 벌의 다른 잣대로 찾고 있었다. 앞의 것은 '너비 30 이상' 이면 받고,
-뒤의 것은 '너비 120~340' 만 받았다. 그날 실측한 열 너비는 102/103/115px —
-셋 다 120 미만이라 전부 탈락했다. 창 크기와 확대율에 따라 매일 달라지는 값에
-고정 숫자를 걸어 둔 것이 원인이다 (실측 targetX 가 날마다 1064~2404).
+같은 열을 두 벌의 다른 잣대로 찾고 있었고, 뒤의 것이 '너비 120~340px' 이라는
+고정 숫자를 썼다. 그날 실측한 열 너비는 102 / 102 / 103 / 115px — 넷 다 탈락.
+창 크기와 확대율은 매일 달라진다(그날 로그의 targetX 가 1064~2404).
 
-고친 방법: 앞에서 찾아 둔 열(col)의 실제 좌우 경계를 그대로 쓴다.
+고친 방법: 좌표를 아예 안 본다. 표의 구조로 센다.
 
-⚠️ 범위도 '중심에서 ±95px' 이 아니라 열 경계로 바꿨다. 열이 102px 로 좁게
-   뜨면 ±95 는 옆 날짜까지 삼킨다 — 엉뚱한 날에 재고가 열린다.
+    thead:  인원 | 투어 코스 | 출발지 | 6 | 7 | 8 | 9 | 10 | 11 | 12
+    tbody:  성인 | [코스A]   | 도쿄역 | [칸][칸][칸][칸][칸][칸][칸]
 
-브라우저를 띄우지 않고, 코드가 갖춰졌는지와 고르는 규칙만 확인한다.
+    헤더의 n번째 날짜 = 각 줄의 n번째 날짜 칸.
+
+⚠️ 안전장치: 그 n 은 목표 날짜의 요일 번호와 반드시 같아야 한다.
+   (일=0 … 토=6. 2026-09-10 은 목요일 → 4)
+   다른 주/다른 달이 떠 있으면 여기서 걸린다.
 
     python hub/tests/test_mrt_date_column.py
 """
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 try:
@@ -35,88 +39,108 @@ SRC = (ROOT / "OTA Close" / "mrt.py").read_text(encoding="utf-8", errors="replac
 
 bad = []
 
-# ── 1) 찾아 둔 열을 실제로 쓰는가 ────────────────────────────────────────
-print("  [1] 찾아 둔 열(col)을 쓰는가")
-body = SRC[SRC.index("def set_target_date_inventory("):]
-body = body[:body.index("\ndef ", 10)]
+# ── 1) 좌표로 찾는 코드가 남아 있지 않은가 ──────────────────────────────
+print("  [1] 화면 좌표를 쓰는가")
+fn = SRC[SRC.index("def set_target_date_inventory("):]
+fn = fn[:fn.index("\ndef ", 10)]
 
-uses_col = 'col["x1"]' in body and 'col["x2"]' in body
-print(f"     col 의 좌우 경계 사용: {'예' if uses_col else '!! 아니오'}")
-if not uses_col:
-    bad.append("찾아 둔 열(col)을 안 쓰고 어딘가에서 다시 찾는다")
+checks = [
+    ("고정 너비 조건 (w>120 && w<340)",
+     re.search(r"\.w\s*[<>]=?\s*\d{2,4}\s*&&\s*o?\.?w\s*[<>]=?\s*\d{2,4}", fn)),
+    ("중심 ±픽셀 허용오차", re.search(r"Math\.abs\(\s*cx\s*-\s*\w+\s*\)\s*>\s*\d+", fn)),
+    ("getBoundingClientRect", "getBoundingClientRect" in fn),
+    ("x 좌표 비교", re.search(r"col\.x1|col\.x2|targetX", fn)),
+]
+for label, hit in checks:
+    print(f"     {label:30} {'!! 남아 있음' if hit else '없음'}")
+    if hit:
+        bad.append(f"좌표로 찾는 코드가 남아 있다: {label}")
 
-# ── 2) 고정 픽셀 잣대가 남아 있지 않은가 ─────────────────────────────────
+# 옛 함수는 지웠는가
+if "def get_calendar_date_column(" in SRC:
+    print("     !! 옛 좌표 함수 get_calendar_date_column 이 남아 있다")
+    bad.append("옛 좌표 함수가 남아 있다 — 두 벌이 되면 반드시 어긋난다")
+else:
+    print("     옛 좌표 함수 get_calendar_date_column: 지워짐")
+
+# ── 2) 구조로 찾는가 ────────────────────────────────────────────────────
 print()
-print("  [2] 고정 픽셀 숫자")
-# 'w > 120 && w < 340' 같은 너비 문지기
-width_gate = re.search(r"\.w\s*[<>]=?\s*\d{2,4}\s*&&\s*o?\.?w\s*[<>]=?\s*\d{2,4}", body)
-print(f"     너비 문지기(w>120&&w<340): {'!! 남아 있음' if width_gate else '없음'}")
-if width_gate:
-    bad.append(f"고정 너비 조건이 남아 있다: {width_gate.group(0)}")
+print("  [2] 표의 구조로 찾는가")
+for need, label in (("thead tr", "thead 에서 날짜 헤더를 찾는다"),
+                    ("tbody tr", "tbody 각 줄을 본다"),
+                    ("dayCells[want.index]", "헤더의 n번째 = 줄의 n번째 칸")):
+    ok = need in fn or need in SRC
+    print(f"     {label:34} {'예' if ok else '!! 아니오'}")
+    if not ok:
+        bad.append(f"구조로 찾지 않는다: {label}")
 
-# 'Math.abs(cx - targetX) > 95' 같은 중심 기준 허용오차
-tol = re.search(r"Math\.abs\(\s*cx\s*-\s*\w+\s*\)\s*>\s*(\d+)", body)
-print(f"     중심 ±픽셀 허용오차: {'!! 남아 있음 (±' + tol.group(1) + ')' if tol else '없음'}")
-if tol:
-    bad.append(f"중심 기준 ±{tol.group(1)}px 이 남아 있다 (옆 날짜를 삼킬 수 있다)")
+# 요일 번호 대조를 하는가
+if "expect_idx" not in SRC:
+    bad.append("요일 번호 대조(expect_idx)를 안 한다")
+print(f"     {'요일 번호와 대조한다':34} {'예' if 'expect_idx' in SRC else '!! 아니오'}")
 
-# ── 3) 고르는 규칙이 실제로 맞는가 (그날의 실측 좌표로) ──────────────────
+# ── 3) 요일 번호 대조가 실제로 맞는가 ───────────────────────────────────
 print()
-print("  [3] 2026-09-09 실측 좌표로 고르기")
+print("  [3] 요일 번호 계산")
+sys.path.insert(0, str(ROOT / "OTA Close"))
+import mrt  # noqa: E402
+
+CASES = [(date(2026, 9, 6), 0, "일"), (date(2026, 9, 10), 4, "목"),
+         (date(2026, 9, 12), 6, "토"), (date(2026, 10, 1), 4, "목")]
+for d, want, kr in CASES:
+    got = mrt._weekday_to_calendar_idx(d)
+    mark = "" if got == want else f"  !! 기대 {want}"
+    print(f"     {d} ({kr}) -> {got}번째 칸{mark}")
+    if got != want:
+        bad.append(f"{d} 의 요일 번호가 {got} (기대 {want})")
+
+# ── 4) 그날 실측한 표로 골라 보기 ───────────────────────────────────────
+print()
+print("  [4] 2026-09-09 실측 표로 고르기")
+# 실제 화면에서 읽은 것 (상품 5724343). 날짜 칸이 rowSpan 으로 코스를 덮는다.
+HEAD = ["6", "7", "8", "9", "10", "11", "12"]
+ROWS = [  # (줄 이름, 날짜 칸 개수)
+    ("성인 [코스 A] 가마쿠라 하이라이트 도쿄역", 7),
+    ("성인 [코스 A] 가마쿠라 하이라이트 신주쿠", 0),   # 위 줄의 rowSpan 이 덮는다
+    ("소인 [코스 A] 가마쿠라 하이라이트 도쿄역", 0),
+    ("소인 [코스 A] 가마쿠라 하이라이트 신주쿠", 0),
+    ("성인 [코스 B] 가마쿠라&요코하마 도쿄역", 7),
+    ("성인 [코스 B] 가마쿠라&요코하마 신주쿠", 0),
+    ("소인 [코스 B] 가마쿠라&요코하마 도쿄역", 0),
+    ("소인 [코스 B] 가마쿠라&요코하마 신주쿠", 0),
+]
 
 
-def pick(col_x1, col_x2, inputs, tolerance=None, center=None):
-    """새 방식(열 경계) / 옛 방식(중심 ±tolerance) 를 흉내낸다."""
+def pick(head, rows, day):
+    idx = head.index(day)
     out = []
-    for name, cx in inputs:
-        if tolerance is not None:
-            if abs(cx - center) <= tolerance:
-                out.append(name)
-        elif col_x1 - 4 <= cx <= col_x2 + 4:
-            out.append(name)
-    return out
+    for name, n in rows:
+        if not n:
+            continue            # 날짜 칸이 없는 줄은 건너뛴다 (이중 입력 방지)
+        if n != len(head):
+            continue            # 헤더와 개수가 다르면 믿지 않는다
+        out.append((name, idx))
+    return idx, out
 
 
-# 실제 화면에서 잰 값 (상품 5724343, 2026-09-10 목요일)
-COLS = {"6": (602, 704), "7": (704, 806), "8": (806, 908), "9": (908, 1010),
-        "10": (1010, 1111), "11": (1111, 1213), "12": (1213, 1315)}
-# 각 날짜 열의 입력칸 (열 중심에서 살짝 왼쪽에 그려진다)
-INPUTS = [(f"{d}일칸", (a + b) // 2 - 2) for d, (a, b) in COLS.items()]
+idx, got = pick(HEAD, ROWS, "10")
+print(f"     10일 = {idx}번째 칸 / 고른 줄 {len(got)}개")
+for name, _ in got:
+    print(f"       {name}")
+if idx != 4:
+    bad.append(f"10일이 {idx}번째 (기대 4)")
+if len(got) != 2:
+    bad.append(f"고른 줄이 {len(got)}개 (기대 2 — 코스 A / 코스 B)")
 
-x1, x2 = COLS["10"]
-got = pick(x1, x2, INPUTS)
-print(f"     새 방식: {got}")
-if got != ["10일칸"]:
-    bad.append(f"새 방식이 10일 말고 다른 것도 골랐다: {got}")
-
-# 옛 방식은 좁은 열에서 옆 날짜까지 삼킨다
-center = (x1 + x2) // 2
-leak = pick(x1, x2, INPUTS, tolerance=95, center=center)
-print(f"     옛 방식(중심 ±95px): {leak}")
-if len(leak) > 1:
-    print(f"     -> 좁은 열에서는 옆 날짜까지 삼켰다 ({len(leak)}개)")
-
-# 열이 조금만 더 좁아지면(예: 80px) 옛 방식은 확실히 샌다
-NARROW = {str(d): (600 + (d - 6) * 80, 600 + (d - 5) * 80) for d in range(6, 13)}
-n_inputs = [(f"{d}일칸", (a + b) // 2 - 2) for d, (a, b) in NARROW.items()]
-nx1, nx2 = NARROW["10"]
-new_narrow = pick(nx1, nx2, n_inputs)
-old_narrow = pick(nx1, nx2, n_inputs, tolerance=95, center=(nx1 + nx2) // 2)
-print(f"     열 80px 일 때 — 새 방식 {new_narrow} / 옛 방식 {len(old_narrow)}개 {old_narrow}")
-if new_narrow != ["10일칸"]:
-    bad.append("열이 좁아지면 새 방식도 어긋난다")
-if len(old_narrow) <= 1:
-    bad.append("옛 방식이 새는 것을 못 보여줬다 — 이 테스트가 의미가 없다")
-
-# ── 4) 실측 너비가 옛 조건에 걸렸다는 사실 ───────────────────────────────
+# 실측 열 너비: 옛 조건이었다면 전부 탈락했다
 print()
-print("  [4] 2026-09-09 실측 열 너비")
+print("     그날 실측 열 너비 (옛 조건은 '120 초과' 였다)")
 for pid, w in (("5724343", 102), ("3887808", 102), ("5728538", 103), ("5889847", 115)):
-    print(f"     {pid}  너비 {w}px  옛 조건(120 초과) {'통과' if w > 120 else '탈락'}")
+    print(f"       {pid}  {w}px  -> 옛 조건 {'통과' if w > 120 else '탈락'}")
 
 print()
 if bad:
     for b in bad:
         print("  !!", b)
     raise SystemExit(f"!! {len(bad)}건 어긋남")
-print("전부 통과 — 날짜 열은 찾아 둔 경계로 고르고, 옆 날짜를 삼키지 않는다")
+print("전부 통과 — 날짜 열은 구조로 찾고, 요일 번호로 한 번 더 대조한다")

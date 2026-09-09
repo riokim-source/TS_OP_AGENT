@@ -973,7 +973,8 @@ def run_close_workers(target_date: Optional[date], dry_run: bool,
                     LOG.info("(%d/%d) [%s] %s | %s | skip: target 슬롯 없음 (reason=%s, elapsed=%.1fs)",
                              processed, total, tag, p["code"], _label_short,
                              res.get("reason", "?"), res.get("elapsed", 0.0))
-                    if res.get("reason") in ("no_section", "no_slots", "timeout_with_target", "opts_incomplete", "?"):
+                    if res.get("reason") in ("no_section", "no_slots", "timeout_with_target", "opts_incomplete",
+                                              "apply_failed", "checkbox_missing", "?"):
                         retry_targets.append((idx, p, res.get("reason", "?")))
                 else:
                     failed += 1
@@ -1012,7 +1013,8 @@ def run_close_workers(target_date: Optional[date], dry_run: bool,
                     LOG.info("(%d/%d) %s | %s | skip: target 슬롯 없음 (reason=%s, elapsed=%.1fs)",
                              local_i, len(my_indexed), p["code"], _label_short,
                              res.get("reason", "?"), res.get("elapsed", 0.0))
-                    if res.get("reason") in ("no_section", "no_slots", "timeout_with_target", "opts_incomplete", "?"):
+                    if res.get("reason") in ("no_section", "no_slots", "timeout_with_target", "opts_incomplete",
+                                              "apply_failed", "checkbox_missing", "?"):
                         retry_targets.append((gidx, p, res.get("reason", "?")))
                 else:
                     failed += 1
@@ -1045,7 +1047,10 @@ def run_close_workers(target_date: Optional[date], dry_run: bool,
                 #    느리게 뜨는 화면을 잡는 게 목적이라 짧게 줄이면 의미가 없다.
                 #    대신 '진짜 이상한 것' 을 먼저 본다. 중간에 끊겨도 중요한
                 #    것은 끝나 있게.
-                _PRIO = {"opts_incomplete": 0, "?": 1, "timeout_with_target": 1,
+                # '판단할 수 없었다' 를 먼저 본다. 중간에 끊겨도 중요한 것은 끝나 있게.
+                # no_section/no_slots 는 '봤는데 없더라' 라서 뒤로 미룬다.
+                _PRIO = {"opts_incomplete": 0, "apply_failed": 0, "checkbox_missing": 0,
+                         "?": 1, "timeout_with_target": 1,
                          "no_slots": 2, "no_section": 3}
                 retry_targets.sort(key=lambda t: _PRIO.get(t[2], 1))
                 # 사유별로 몇 개 돌려 몇 개 건졌는지 남긴다.
@@ -1060,7 +1065,8 @@ def run_close_workers(target_date: Optional[date], dry_run: bool,
                     _label_short = (p.get("label") or "")[:50]
                     if res["status"] == "success":
                         success += 1
-                        if prev_reason in ("no_section", "no_slots", "timeout_with_target", "opts_incomplete", "?"):
+                        if prev_reason in ("no_section", "no_slots", "timeout_with_target", "opts_incomplete",
+                                              "apply_failed", "checkbox_missing", "?"):
                             skipped = max(0, skipped - 1)
                         recovered += 1
                         _saved[prev_reason] = _saved.get(prev_reason, 0) + 1
@@ -1069,21 +1075,32 @@ def run_close_workers(target_date: Optional[date], dry_run: bool,
                                  res["result"])
                     elif res["status"] == "closed":
                         closed += 1
-                        if prev_reason in ("no_section", "no_slots", "timeout_with_target", "opts_incomplete", "?"):
+                        if prev_reason in ("no_section", "no_slots", "timeout_with_target", "opts_incomplete",
+                                              "apply_failed", "checkbox_missing", "?"):
                             skipped = max(0, skipped - 1)
                         recovered += 1
                         _saved[prev_reason] = _saved.get(prev_reason, 0) + 1
                         LOG.info("[q%s] (재시도 %d/%d) %s | %s | 회복 → CLOSE (이미 마감)",
                                  quarter, ri, len(retry_targets), p["code"], _label_short)
-                    elif res.get("reason") == "opts_incomplete":
-                        # 재시도(15초 대기) 후에도 옵션 미완성 → 마감 확정 불가.
+                    elif res.get("reason") in ("opts_incomplete", "apply_failed",
+                                               "checkbox_missing"):
+                        # 재시도(15초 대기) 후에도 '판단할 수 없음'.
                         # 조용히 넘기지 말고 '실패'로 표면화(열려있는데 위장 마감 방지).
+                        #
+                        # ⚠️ no_section / no_slots 와는 다르다. 그건 '봤는데 없더라'
+                        #    (= 그날 안 파는 상품) 이고, 이건 '보지도 못했다' 이다.
+                        #    모르는 것을 괜찮다고 보고하면 열린 재고가 그대로 남는다.
+                        #    (2026-09-09: 48881P245 가 apply_failed 인데 스킵으로
+                        #     묻혀서, 마감 결과에는 실패가 한 줄도 안 남았다)
                         failed += 1
-                        errors.append(f"{p['code']}: opts_incomplete (마감 확정 실패, 수동 확인 필요)")
-                        if prev_reason in ("no_section", "no_slots", "timeout_with_target", "opts_incomplete", "?"):
+                        errors.append(f"{p['code']}: {res.get('reason')} "
+                                      f"(마감 확정 실패, 수동 확인 필요)")
+                        if prev_reason in ("no_section", "no_slots", "timeout_with_target", "opts_incomplete",
+                                              "apply_failed", "checkbox_missing", "?"):
                             skipped = max(0, skipped - 1)
-                        LOG.warning("[q%s] (재시도 %d/%d) %s | %s | 마감 확정 실패(옵션 미완성) → 실패 처리, 수동 확인 필요",
-                                    quarter, ri, len(retry_targets), p["code"], _label_short)
+                        LOG.warning("[q%s] (재시도 %d/%d) %s | %s | 마감 확정 실패(%s) → 실패 처리, 수동 확인 필요",
+                                    quarter, ri, len(retry_targets), p["code"], _label_short,
+                                    res.get("reason"))
                     else:
                         LOG.info("[q%s] (재시도 %d/%d) %s | %s | 여전히 %s (reason=%s)",
                                  quarter, ri, len(retry_targets), p["code"], _label_short,

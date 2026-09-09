@@ -43,6 +43,63 @@ _ALL_REGIONS = ["KOREA", "JAPAN", "AUSTRALIA", "UK"]
 
 _RESULT_RE = re.compile(r"\[([^\]]+)\]\s*success=(\d+)\s*failed=(\d+)\s*skipped=(\d+)")
 
+# 봇이 끝에 찍는 채널별 요약과 사유.
+#     [    GG] 성공 103 / 실패   1 / 스킵   0
+#                └─ ERROR: KOREA: page size 50 변경 실패
+_SUMMARY_RE = re.compile(r"\[\s*(KKDAY|KLOOK|GG|VI|MRT)\s*\]\s*성공")
+_ERR_RE = re.compile(r"(?:└─\s*)?ERROR:\s*(.+)$")
+
+
+class Tally:
+    """
+    마감 봇이 뱉는 줄을 읽어 채널별 성공/실패/스킵과 실패 사유를 모은다.
+
+    ⚠️ 예전에는 집계만 모으고 실패를 아무 데도 안 남겼다. 화면은 result="집계"
+       줄을 실패 세기에서 빼므로(그게 맞다 — 집계는 항목이 아니다), 봇이 실패
+       3건을 보고해도 화면에는 늘 '실패 없음' 이 떴다.
+       (2026-09-09 마감: GG 1건 + VI 2건이 이렇게 묻혔다)
+    """
+
+    def __init__(self):
+        self.totals: dict[str, dict] = {}
+        self.errors: dict[str, list[str]] = {}
+        self._chan = "OTA"
+
+    def feed(self, line: str, src: str = "OTA") -> dict | None:
+        """한 줄 읽는다. 결과표에 남길 집계 줄이 있으면 돌려준다."""
+        ms = _SUMMARY_RE.search(line)
+        if ms:
+            self._chan = ms.group(1).upper()
+        me = _ERR_RE.search(line)
+        if me:
+            chan = src if src in self.CHANNELS else self._chan
+            msg = me.group(1).strip()
+            if msg and msg not in self.errors.setdefault(chan, []):
+                self.errors[chan].append(msg)
+        m = _RESULT_RE.search(line)
+        if not m:
+            return None
+        label = m.group(1)
+        base = label.split("/")[0].upper()
+        t = self.totals.setdefault(base, {"success": 0, "failed": 0, "skipped": 0})
+        t["success"] += int(m.group(2))
+        t["failed"] += int(m.group(3))
+        t["skipped"] += int(m.group(4))
+        return {"channel": base, "item": label, "result": "집계",
+                "memo": f"성공 {m.group(2)} / 실패 {m.group(3)} / 스킵 {m.group(4)}"}
+
+    CHANNELS = ("KKDAY", "KLOOK", "GG", "VI", "MRT")
+
+    def failed_channels(self) -> dict[str, dict]:
+        return {c: t for c, t in self.totals.items() if t.get("failed")}
+
+    def n_failed(self) -> int:
+        return sum(t["failed"] for t in self.totals.values())
+
+    def detail(self, chan: str) -> str:
+        return " / ".join(self.errors.get(chan, [])[:5]) or "로그를 확인하세요"
+
+
 
 def available() -> tuple[bool, str]:
     d = ota_close_dir()
@@ -267,7 +324,7 @@ def run(job, target_date: str, agencies: list[str], regions: list[str],
     )
     job.set_stopper(lambda: proc.terminate())
 
-    totals: dict[str, dict] = {}
+    tally = Tally()
 
     def pump():
         assert proc.stdout is not None
@@ -281,21 +338,44 @@ def run(job, target_date: str, agencies: list[str], regions: list[str],
                     src = bot
                     break
             job.log(src, line)
-            m = _RESULT_RE.search(line)
-            if m:
-                label = m.group(1)
-                base = label.split("/")[0].upper()
-                t = totals.setdefault(base, {"success": 0, "failed": 0, "skipped": 0})
-                t["success"] += int(m.group(2))
-                t["failed"] += int(m.group(3))
-                t["skipped"] += int(m.group(4))
-                job.result({"channel": base, "item": label, "result": "집계",
-                            "memo": f"성공 {m.group(2)} / 실패 {m.group(3)} / 스킵 {m.group(4)}"})
+            row = tally.feed(line, src)
+            if row:
+                job.result(row)
 
     th = threading.Thread(target=pump, daemon=True)
     th.start()
     proc.wait()
     th.join(timeout=5)
 
+    # ⚠️ 실패를 결과에 '실패' 로 남긴다.
+    #
+    #    예전에는 채널별 줄을 전부 result="집계" 로만 남겼다. 화면은 집계 줄을
+    #    실패 세기에서 빼도록 돼 있어서(그게 맞다 — 집계는 항목이 아니다),
+    #    봇이 실패 3건을 보고해도 화면에는 늘 '실패 없음' 이 떴다.
+    #    (2026-09-09 마감: GG 1건 + VI 2건이 이렇게 묻혔다)
+    #
+    #    집계 줄은 그대로 두고, 실패가 있는 채널만 '실패' 줄을 따로 남긴다.
+    bad = tally.failed_channels()
+    for chan, t in sorted(bad.items()):
+        detail = tally.detail(chan)
+        job.log("SYS", f"[실패] {chan} {t['failed']}건 — {detail}")
+        job.result({"channel": chan, "region": "", "item": "(채널 전체)",
+                    "result": "실패",
+                    "memo": f"{t['failed']}건 실패 — {detail}"[:300]})
+
+    n_fail = tally.n_failed()
+    parts = [f"{c} {t['failed']}건" for c, t in sorted(bad.items())]
+    err = None
+    if n_fail:
+        err = "마감하지 못한 것 — " + " / ".join(parts) + " (결과표를 확인하세요)"
+    if proc.returncode:
+        # 봇이 비정상 종료했으면 위 집계 자체를 믿을 수 없다.
+        msg = f"마감 프로그램이 비정상 종료했습니다 (코드 {proc.returncode})"
+        job.log("SYS", f"[오류] {msg}")
+        job.result({"channel": "OTA", "region": "", "item": "(전체)",
+                    "result": "실패", "memo": msg})
+        err = f"{err} / {msg}" if err else msg
+
     job.done(summary={"kind": "close", "date": target_date, "dry_run": dry_run,
-                      "totals": totals, "returncode": proc.returncode})
+                      "totals": tally.totals, "returncode": proc.returncode,
+                      "실패": parts}, error=err)

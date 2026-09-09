@@ -70,10 +70,20 @@ for p, name in ((ROOT / "hub" / "core" / "close" / "runner.py", "마감"),
 # 꺼진 포트는 빨리 False 여야 한다 (오래 매달리면 의미가 없다)
 import time  # noqa: E402
 
-t0 = time.perf_counter()
-ok, why = cdp_attach_ok(59999, timeout_ms=8000)     # 아무도 없는 포트
-el = time.perf_counter() - t0
-print(f"     꺼진 포트 판정: {ok} ({el:.1f}초) {why[:40]}")
+# ⚠️ 두 번 재서 빠른 쪽을 쓴다. 재려는 것은 '코드가 매달리지 않는가' 지
+#    '지금 이 컴퓨터가 한가한가' 가 아니다. 한 번만 재면 다른 일이 겹친 순간에
+#    헛되이 실패한다 (2026-09-09 에 12.7초가 나와 전체 검사가 빨간불이 됐는데,
+#    바로 다시 재니 0.6초였다).
+els = []
+for _ in range(2):
+    t0 = time.perf_counter()
+    ok, why = cdp_attach_ok(59999, timeout_ms=8000)     # 아무도 없는 포트
+    els.append(time.perf_counter() - t0)
+    if ok:
+        break
+el = min(els)
+print(f"     꺼진 포트 판정: {ok} ({el:.1f}초, 잰 값 {', '.join(f'{e:.1f}' for e in els)}) "
+      f"{why[:40]}")
 if ok:
     bad.append("꺼진 포트를 '된다' 고 한다")
 if el > 12:

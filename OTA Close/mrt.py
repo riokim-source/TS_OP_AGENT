@@ -1606,79 +1606,88 @@ def goto_inventory_management(page: Page):
 
 
 
-def get_calendar_date_column(page: Page, day_number: str):
+def get_day_column(page: Page, day_number: str, expect_idx: int | None = None) -> dict:
+    """
+    날짜 열을 '표의 구조' 로 찾는다. 화면 좌표를 전혀 보지 않는다.
+
+    MRT 재고표는 이렇게 생겼다.
+
+        thead 줄0:  옵션명(colspan 3)     | 일 | 월 | 화 | 수 | 목 | 금 | 토
+        thead 줄1:  인원 | 투어코스 | 출발지 | 6  | 7  | 8  | 9  | 10 | 11 | 12
+        tbody 줄0:  성인 | [코스A]  | 도쿄역 | [칸][칸][칸][칸][칸][칸][칸]
+        tbody 줄1:  성인 | [코스A]  | 신주쿠 |   (날짜 칸 없음 — 위 줄이 rowSpan=4 로 덮는다)
+
+    헤더의 n번째 날짜 = 각 줄의 n번째 날짜 칸. 그게 전부다.
+
+    ⚠️ 예전에는 화면 좌표(x)로 찾았다. '날짜 숫자가 적힌, 너비 120~340px 인
+       네모' 를 찾는 식이었다. 2026-09-09 오픈에서 열 너비가 102px 로 뜨는 바람에
+       6~12일 전 컬럼이 탈락해 MRT 4건이 전멸했다. 창 크기와 확대율은 매일
+       달라진다(그날 로그의 targetX 가 1064~2404). 표의 구조는 안 달라진다.
+
+    ⚠️ 안전장치: 찾은 칸 번호는 목표 날짜의 요일 번호와 반드시 같아야 한다.
+       (일=0 … 토=6. 2026-09-10 은 목요일이므로 4)
+       다른 주/다른 달이 떠 있으면 같은 숫자가 다른 자리에 있으므로 여기서 걸린다.
+       엉뚱한 날짜에 재고를 쓰느니 멈추는 게 낫다.
+    """
     print(f"[진행] 캘린더 날짜 컬럼 찾기: {day_number}")
 
     scroll_calendar_week_title_into_view(page)
 
     info = page.evaluate(
         r"""(dayNumber) => {
-            function norm(s) { return (s || '').replace(/\s+/g, ' ').trim(); }
-            function visible(el) {
-                if (!el) return false;
-                const r = el.getBoundingClientRect();
-                const st = window.getComputedStyle(el);
-                const vh = window.innerHeight || 1080;
-                const vw = window.innerWidth || 1920;
-                return st.display !== 'none' &&
-                       st.visibility !== 'hidden' &&
-                       st.opacity !== '0' &&
-                       r.width > 0 &&
-                       r.height > 0 &&
-                       r.bottom >= 0 &&
-                       r.top <= vh &&
-                       r.right >= 0 &&
-                       r.left <= vw;
+            const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+            const tables = Array.from(document.querySelectorAll('table'));
+            for (const tb of tables) {
+                // 날짜 숫자만 5개 이상 들어 있는 thead 줄 = 날짜 헤더
+                let days = null;
+                for (const tr of Array.from(tb.querySelectorAll('thead tr'))) {
+                    const nums = Array.from(tr.children)
+                        .filter(c => /^\d{1,2}$/.test(norm(c.innerText)))
+                        .map(c => norm(c.innerText));
+                    if (nums.length >= 5) { days = nums; break; }
+                }
+                if (!days) continue;
+                const idx = days.indexOf(String(dayNumber));
+                if (idx < 0) continue;
+                // 같은 숫자가 두 번 나오면(두 주가 겹쳐 뜬 경우) 고르지 않는다
+                if (days.indexOf(String(dayNumber), idx + 1) >= 0) {
+                    return {error: 'duplicate', days: days};
+                }
+                // 각 줄의 날짜 칸 개수가 헤더와 맞는지
+                let rows = 0, odd = 0;
+                for (const tr of Array.from(tb.querySelectorAll('tbody tr'))) {
+                    const n = Array.from(tr.children).filter(c => c.querySelector(
+                        'input[name^="stockBundles."][name$=".remainQuantity"]')).length;
+                    if (!n) continue;               // 위 줄의 rowSpan 이 덮는 줄
+                    rows += 1;
+                    if (n !== days.length) odd += 1;
+                }
+                const titleEl = Array.from(document.querySelectorAll('*'))
+                    .map(e => norm(e.innerText || ''))
+                    .filter(t => /^\d{4}\s*년\s*\d{1,2}\s*월\s*\d+\s*주차$/.test(t));
+                return {index: idx, days: days, rows: rows, odd: odd,
+                        title: titleEl[0] || ''};
             }
-            function rect(el) {
-                const r = el.getBoundingClientRect();
-                return {el, text:norm(el.innerText || el.textContent || ''), x:r.x, y:r.y, width:r.width, height:r.height,
-                        centerX:r.x + r.width/2, centerY:r.y + r.height/2,
-                        x1:r.x, x2:r.x + r.width, area:r.width*r.height};
-            }
-            const titleRe = /\d{4}\s*년\s*\d{1,2}\s*월\s*\d+\s*주차/;
-            const titles = Array.from(document.querySelectorAll('button,[role="button"],span,div,p,strong,b,h1,h2,h3,h4,a'))
-                .filter(visible)
-                .map(rect)
-                .filter(o => titleRe.test(o.text))
-                .sort((a,b) => a.area - b.area || a.y - b.y);
-            const title = titles[0] || null;
-            const minY = title ? title.centerY : 0;
-
-            const raw = Array.from(document.querySelectorAll('th,td,[role="columnheader"],[role="cell"],div,span,button'))
-                .filter(visible)
-                .map(el => ({source:el, text:norm(el.innerText || el.textContent || ''), ...rect(el)}))
-                .filter(o => o.text === String(dayNumber) && o.centerY > minY + 10);
-
-            const cells = [];
-            for (const o of raw) {
-                let cell = o.source.closest('th,td,[role="columnheader"],[role="cell"]') || o.source;
-                if (!visible(cell)) continue;
-                const c = rect(cell);
-                if (c.width < 30 || c.height < 18) continue;
-                if (title && c.centerY < title.centerY + 20) continue;
-                if (c.text !== String(dayNumber) && !c.text.split(' ').includes(String(dayNumber))) continue;
-                // 팝업 달력 셀은 테이블 헤더보다 작으므로 제외
-                if (c.width < 45 && c.height < 45) continue;
-                if (!cells.some(x => Math.abs(x.x - c.x) < 2 && Math.abs(x.y - c.y) < 2)) cells.push(c);
-            }
-
-            cells.sort((a,b) => {
-                const targetY = title ? title.centerY + 85 : a.y;
-                return Math.abs(a.centerY - targetY) - Math.abs(b.centerY - targetY) || b.width - a.width || a.x - b.x;
-            });
-
-            if (!cells.length) return null;
-            const c = cells[0];
-            return {x1:c.x1, x2:c.x2, centerX:c.centerX, y:c.y, text:c.text, width:c.width, height:c.height};
+            return null;
         }""",
         str(day_number),
     )
 
     if not info:
         raise Exception(f"캘린더에서 날짜 {day_number} 컬럼을 찾지 못했습니다.")
+    if info.get("error") == "duplicate":
+        raise Exception(f"화면에 날짜 {day_number} 이 두 번 있습니다 "
+                        f"({info.get('days')}). 주차를 확인하세요.")
+    if expect_idx is not None and info["index"] != expect_idx:
+        raise Exception(
+            f"날짜 {day_number} 이 {info['index']}번째 칸에 있는데 "
+            f"목표 요일은 {expect_idx}번째입니다 — 다른 주가 떠 있는 것 같습니다 "
+            f"(주차 '{info.get('title')}', 날짜 {info.get('days')}).")
+    if info.get("odd"):
+        print(f"[주의] 날짜 칸 개수가 헤더와 다른 줄이 {info['odd']}개 있습니다.")
 
-    print(f"[완료] 날짜 컬럼 확인: {day_number} / x={int(info['centerX'])}, y={int(info['y'])}")
+    print(f"[완료] 날짜 컬럼 확인: {day_number} = {info['index']}번째 칸 "
+          f"/ {info.get('title')} / 날짜 {info['days']} / 재고 줄 {info['rows']}개")
     return info
 
 
@@ -1687,10 +1696,15 @@ def enable_inventory_edit_mode(page: Page) -> str:
     페이지 처음 진입 시 모든 인원 셀 input 이 disabled 상태.
     "예약 인원 수정" 버튼을 한 번 누르면 편집 모드 활성화되고 disabled 가 풀림.
 
-    반환값 (기존 bool → 3-상태 문자열):
+    반환값 (기존 bool → 4-상태 문자열):
       "ok"              : 편집 모드 활성화됨 (또는 이미 활성화)
-      "no_button"       : '예약 인원 수정' 버튼이 DOM 에 없음 → 판매중 아님 (SKIP 대상)
+      "no_button"       : '판매 재개' 가 보임 = 지금 판매를 멈춘 상품 (SKIP 대상)
+      "not_loaded"      : 판매중 여부를 판정할 수 없음 → 실패(수동확인)
       "activate_failed" : 버튼은 있으나(=판매중) 활성화 실패 → 실패(수동확인) + 재시도 대상
+
+    ⚠️ '편집 버튼이 안 보인다' 는 것은 판매중 아님의 근거가 못 된다. 화면이 아직
+       덜 그려져도 똑같이 안 보인다. 판매중 아님은 '판매 재개' 버튼이 보일 때만
+       단정한다 — 없는 것이 아니라 있는 것으로 판정한다.
 
     ⚠️ 토요일(일요일 타깃) 콜드로드에서 편집버튼 클릭이 3초 타임아웃 나면
        예전엔 무조건 '버튼 없음 → 판매중 아님 SKIP' 으로 오판 → 판매중 상품이
@@ -1728,19 +1742,55 @@ def enable_inventory_edit_mode(page: Page) -> str:
         """
         재고 관리 화면이 실제로 그려졌는지(=판정할 자격이 있는지) 확인.
         이 앵커들이 없으면 아직 로딩 중/로그인 리다이렉트 등 → '판매중 아님' 단정 금지.
+
+        ⚠️ 예전에는 '예약 인원 관리' 라는 글자도 앵커로 썼다. 그런데 그건
+           **왼쪽 메뉴 이름**이라 표가 뜨기 한참 전부터 화면에 있다.
+           그래서 아직 아무것도 안 그려졌는데 '다 떴다' 고 판정했고,
+           버튼이 아직 없는 것을 '판매중 아님' 으로 단정해 버렸다.
+           (2026-09-09 마감: 5728538 시라카와고가 이렇게 조용히 넘어갔다.
+            실제로는 판매중이었고 화면에 '판매 중지' 버튼이 떠 있었다)
+           아래 앵커는 재고 화면 아래쪽 버튼바 / 재고표에만 있는 것들이다.
         """
         try:
             return page.evaluate(
                 """() => {
                     const t = document.body ? (document.body.innerText || '') : '';
-                    const hasAnchor = t.includes('예약 인원 관리') || t.includes('여행자 상품 보기')
-                                      || t.includes('판매 중지') || t.includes('판매 재개');
+                    const hasBar = t.includes('여행자 상품 보기') || t.includes('되돌리기')
+                                   || t.includes('판매 중지') || t.includes('판매 재개');
+                    const hasWeek = /\\d{4}\\s*년\\s*\\d{1,2}\\s*월\\s*\\d+\\s*주차/.test(t);
                     const hasCells = document.querySelectorAll('input[name^="stockBundles."]').length > 0;
-                    return hasAnchor || hasCells;
+                    return hasBar || hasWeek || hasCells;
                 }"""
             )
         except Exception:
             return False
+
+    def _sales_state():
+        """
+        판매 상태를 '있는 것' 으로 판정한다. 없는 것으로 판정하지 않는다.
+
+            '판매 재개' 버튼이 보인다  -> 지금 판매를 멈춘 상품  ("stopped")
+            '판매 중지' 버튼이 보인다  -> 지금 판매중인 상품      ("selling")
+            둘 다 없다                 -> 아직 못 읽는다          ("unknown")
+
+        '예약 인원 수정 버튼이 없다' 는 것만으로 판매중 아님을 단정하면,
+        늦게 그려지는 화면을 전부 '안 파는 상품' 으로 넘겨 버린다.
+        """
+        try:
+            return page.evaluate(
+                """() => {
+                    const btns = Array.from(document.querySelectorAll('button'))
+                        .map(b => (b.innerText || '').trim());
+                    if (btns.includes('판매 재개')) return 'stopped';
+                    if (btns.includes('판매 중지')) return 'selling';
+                    const t = document.body ? (document.body.innerText || '') : '';
+                    if (t.includes('판매 재개')) return 'stopped';
+                    if (t.includes('판매 중지')) return 'selling';
+                    return 'unknown';
+                }"""
+            )
+        except Exception:
+            return "unknown"
 
     # 0) 이미 활성화 상태면 바로 통과 (여기서 다시 버튼 누르면 저장 팝업 뜸 → 절대 금지)
     if _any_enabled():
@@ -1769,9 +1819,21 @@ def enable_inventory_edit_mode(page: Page) -> str:
             # SKIP(판매중 아님) 으로 단정하면 열린 상품을 조용히 놓침 → 실패 처리.
             print("[주의] 재고 화면 미로드(12초) → 판매중 여부 판정 불가 → 실패 처리")
             return "not_loaded"
-        # 화면은 떴는데 버튼이 없음 = 진짜 판매중 아님
-        print("[안내] 화면 로드됨 + '예약 인원 수정' 버튼 없음 → 판매중 아님")
-        return "no_button"
+        # 화면은 떴는데 편집 버튼이 없다. 그것만으로 '안 파는 상품' 이라고
+        # 단정하지 않는다. 판매 상태를 직접 확인한다.
+        state = _sales_state()
+        if state == "stopped":
+            print("[안내] '판매 재개' 버튼 있음 → 지금 판매를 멈춘 상품 → 마감할 것 없음")
+            return "no_button"
+        if state == "selling":
+            # 판매중인데 편집 버튼이 없다 = 아직 덜 그려졌거나 뭔가 이상하다.
+            # 여기서 넘기면 판매중인 상품이 안 닫힌 채로 조용히 지나간다.
+            print("[주의] '판매 중지' 버튼이 보임(=판매중)인데 '예약 인원 수정' 이 없음 "
+                  "→ 판정 불가 → 실패 처리")
+            return "not_loaded"
+        print("[주의] 판매 상태를 읽지 못했습니다('판매 중지'/'판매 재개' 둘 다 없음) "
+              "→ 판정 불가 → 실패 처리")
+        return "not_loaded"
 
     # 2) 버튼이 있으니 클릭 → 활성화. 최대 3회 클릭, 회당 활성화 폴링(3초).
     print("[진행] '예약 인원 수정' 버튼 클릭 - 편집 모드 활성화")
@@ -1935,13 +1997,13 @@ def set_target_date_inventory(page: Page, total: int = 0, split: bool = False,
     print(f"[진행] target weekday={target_weekday_key()} → 캘린더 컬럼 idx={target_cal_idx}")
 
     try:
-        col = get_calendar_date_column(page, day)
+        col = get_day_column(page, day, expect_idx=target_cal_idx)
     except Exception:
         # 토요일 실행 시 일요일 날짜가 현재 주차에 없어 발생하는 케이스 보완
         if target_weekday_key() == "SUN" and not moved_for_sunday:
             print("[주의] 목표 일요일 날짜를 찾지 못해 날짜 팝업으로 내일 날짜 선택 후 재시도합니다.")
             change_calendar_week_by_datepicker(page, target_date(), "일요일 날짜 재탐색")
-            col = get_calendar_date_column(page, day)
+            col = get_day_column(page, day, expect_idx=target_cal_idx)
         else:
             raise
 
@@ -1965,63 +2027,64 @@ def set_target_date_inventory(page: Page, total: int = 0, split: bool = False,
         pass
 
     # 인원 셀 = <input name="stockBundles.X.stocks.N.remainQuantity">.
-    # N = 요일 인덱스 (일=0..토=6). 한 컬럼에 여러 옵션 (X=0,1,2,...) 있을 수도.
-    # target weekday 와 일치하는 N 의 input 들만 정확히 식별.
-    # === 셀 선택: '요일 인덱스(stocks.N)' 대신 '화면의 날짜 열' 기준 ===
-    # MRT 는 stocks.N 인덱스가 렌더마다 바뀌고(0~6 ↔ 7~13) 두 주가 겹쳐 뜨기도 해서
-    # 하드코딩 인덱스는 엉뚱한 날을 가리킬 수 있음. 화면에 보이는 날짜 열 아래의
-    # '보이는' 입력칸만 고른다 (WYSIWYG).
+    # === 셀 선택: 표의 구조로 고른다. 화면 좌표를 보지 않는다. ===
     #
-    # ⚠️ 날짜 열은 위에서 get_calendar_date_column() 이 이미 찾아 놨다(col).
-    #    예전에는 그걸 버리고 여기서 다시 찾았는데, 그때 쓰던 잣대가
-    #    '너비 120~340px' 이라는 고정 숫자였다. 창 크기와 확대율에 따라 열 너비가
-    #    매일 달라지는데(실측 targetX 가 1064~2404 로 널뛴다) 좁게 뜬 날은
-    #    전부 탈락해서 '날짜열 헤더 못 찾음' 이 됐다.
-    #    (2026-09-09 오픈: 열 너비 102px → 6~12일 전 컬럼 탈락, MRT 4건 전멸)
-    #    같은 것을 두 벌의 다른 잣대로 찾을 이유가 없다. 찾아 둔 것을 그대로 쓴다.
+    # 헤더의 n번째 날짜 = 각 줄의 n번째 날짜 칸. 위에서 구한 n(col['index'])을 쓴다.
     #
-    # ⚠️ 범위도 '중심에서 ±95px' 이 아니라 그 열의 실제 좌우 경계를 쓴다.
-    #    열이 102px 로 좁게 뜨면 ±95 는 옆 날짜까지 삼킨다. 엉뚱한 날에 재고가 열린다.
+    # ⚠️ 예전에는 stocks.N 인덱스를 하드코딩했다가, 렌더마다 N 이 바뀌어서
+    #    (0~6 <-> 7~13) 엉뚱한 날을 가리켰다. 그래서 화면 좌표로 바꿨는데,
+    #    이번엔 '너비 120~340px' 이라는 고정 숫자에 걸려 2026-09-09 오픈에서
+    #    MRT 4건이 전멸했다(그날 열 너비 102px). 창 크기와 확대율은 매일 달라진다.
+    #    표의 구조는 안 달라진다. 그래서 구조로 센다.
+    #
+    # ⚠️ 날짜 칸은 rowSpan 으로 코스 묶음을 덮는다. 날짜 칸이 없는 줄은
+    #    위 줄이 덮고 있는 것이므로 건너뛴다 (그 줄에 또 넣으면 이중 입력이 된다).
     cells_and_diag = page.evaluate(
-        """(col) => {
+        r"""(want) => {
             document.querySelectorAll('[data-bot-cell]').forEach(el => el.removeAttribute('data-bot-cell'));
-            const norm = s => (s || '').replace(/\\s+/g, ' ').trim();
-            const all = Array.from(document.querySelectorAll(
-                'input[name^="stockBundles."][name$=".remainQuantity"]'
-            ));
-            // 타깃 날짜 열 아래(headerY 이하) '보이는' remainQuantity 입력만 선택
+            const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+            const SEL = 'input[name^="stockBundles."][name$=".remainQuantity"]';
+            const all = Array.from(document.querySelectorAll(SEL));
+            const tb = document.querySelector('table');
+            if (!tb) return {cells: [], diag: {error: 'table 없음', total_inputs: all.length}};
             const out = [];
-            all.forEach((el, i) => {
-                if (!el.offsetParent) return;                 // 안 보이면 제외
-                const r = el.getBoundingClientRect();
-                if (r.width <= 0 || r.height <= 0) return;
-                const cx = r.x + r.width/2;
-                if (r.y < col.y - 5) return;                  // 헤더 위 영역 제외
-                if (cx < col.x1 - 4 || cx > col.x2 + 4) return;   // 그 열 밖이면 제외
-                const tag = '__bot_cell_' + i + '_' + Date.now();
+            let n = 0, rows = 0, odd = 0;
+            Array.from(tb.querySelectorAll('tbody tr')).forEach(tr => {
+                const dayCells = Array.from(tr.children).filter(c => c.querySelector(SEL));
+                if (!dayCells.length) return;          // 위 줄의 rowSpan 이 덮는 줄
+                rows += 1;
+                if (dayCells.length !== want.count) { odd += 1; return; }
+                const cell = dayCells[want.index];
+                if (!cell) return;
+                const el = cell.querySelector(SEL);
+                if (!el) return;
+                const tag = '__bot_cell_' + (n++) + '_' + Date.now();
                 el.setAttribute('data-bot-cell', tag);
                 // 이 입력칸이 어느 '줄' 인지 = 인원구분(성인/소인) + 코스 + 출발.
                 // MRT 는 상품ID 하나에 코스가 여러 개 들어있어서
                 // ('비에이 시그니처' 와 '비에이 & 후라노' 가 같은 페이지)
                 // 줄을 안 보고 날짜열 셀에 전부 나눠 넣으면 엉뚱한 코스가 열린다.
-                const tr = el.closest('tr');
-                const rowText = tr ? norm(tr.innerText || '').replace(/(\\s*명)+$/, '').trim() : '';
+                const rowText = norm(tr.innerText || '').replace(/(\s*명)+$/, '').trim();
                 out.push({tag, name: el.name, value: el.value,
                           placeholder: el.placeholder, disabled: el.disabled,
                           row_text: rowText,
                           text: el.value || el.placeholder || '0'});
             });
-            return {cells: out, diag: {total_inputs: all.length,
-                    x1: Math.round(col.x1), x2: Math.round(col.x2),
-                    headerY: Math.round(col.y), matched: out.length}};
+            return {cells: out, diag: {total_inputs: all.length, rows: rows,
+                    odd: odd, index: want.index, matched: out.length}};
         }""",
-        {"x1": col["x1"], "x2": col["x2"], "y": col["y"]},
+        {"index": col["index"], "count": len(col["days"])},
     )
     cells = cells_and_diag.get("cells", [])
     diag = cells_and_diag.get("diag", {})
-    print(f"[진단] 날짜열 앵커: day={day} x={diag.get('x1')}~{diag.get('x2')} "
-          f"(너비 {int(col['width'])}) headerY={diag.get('headerY')} "
-          f"전체 input={diag.get('total_inputs')} 매칭={len(cells)}개")
+    if diag.get("error"):
+        print(f"[진단] {diag['error']}")
+    if diag.get("odd"):
+        print(f"[주의] 날짜 칸 개수가 헤더({len(col['days'])}개)와 다른 줄 "
+              f"{diag['odd']}개는 건너뛰었습니다.")
+    print(f"[진단] 날짜열: {day}일 = {diag.get('index')}번째 칸 / 재고 줄 "
+          f"{diag.get('rows')}개 / 전체 input={diag.get('total_inputs')} "
+          f"매칭={len(cells)}개")
 
     if not cells:
         raise Exception(f"{target_date_label()} 날짜 컬럼에서 수정할 인원 셀을 찾지 못했습니다.")

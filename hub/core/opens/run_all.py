@@ -19,6 +19,45 @@ from __future__ import annotations
 from . import gg_open, klook_open, mrt_open
 
 
+class _Counter:
+    """
+    러너가 결과를 몇 건 남겼는지 센다.
+
+    ⚠️ 예전에는 len(job.results) 로 셌다. 이 PC 에서 바로 돌릴 때 쓰는 Job 에는
+       그 목록이 있지만, Agent 로 돌릴 때 쓰는 RemoteJob 에는 없다.
+       그래서 휴대폰에서 시킨 오픈이 시작하자마자 죽었다.
+           AttributeError: 'RemoteJob' object has no attribute 'results'
+       (2026-09-09 10:54 · MRT 4건)
+
+       job 이 무엇이든 상관없도록 job.result() 를 몇 번 불렀는지만 센다.
+       run_open() 은 log/result/done/stopping 만 쓴다고 적어 놨으면
+       실제로도 그것만 써야 한다.
+    """
+
+    def __init__(self, job):
+        self.job = job
+        self.n = 0
+        self._orig = job.result
+        # 원래 인스턴스에 붙어 있던 것인지, 클래스의 메서드인지 기억해 둔다.
+        # 끝나고 되돌릴 때 없던 것을 남겨 두지 않기 위해서다.
+        self._was_own = "result" in vars(job)
+
+    def __enter__(self):
+        self.job.result = self._count
+        return self
+
+    def _count(self, item):
+        self.n += 1
+        self._orig(item)
+
+    def __exit__(self, *exc):
+        if self._was_own:
+            self.job.result = self._orig
+        else:
+            vars(self.job).pop("result", None)
+        return False
+
+
 def run_open(job, p: dict) -> None:
     """
     오픈 실행. job 은 log/result/done/stopping 만 있으면 된다.
@@ -59,17 +98,17 @@ def run_open(job, p: dict) -> None:
                         "result": "중단", "memo": "사용자가 중단해서 실행하지 않음"})
             continue
         job.log("SYS", f"===== {name} 오픈 시작 =====")
-        before = len(job.results)
         job.error = None                  # 앞 채널의 오류를 물려받지 않는다
         why = ""
-        try:
-            fn()
-            why = str(job.error or "")    # 러너가 스스로 보고한 실패
-        except Exception as e:
-            why = f"{type(e).__name__}: {e}"
-            job.log("SYS", f"[오류] {name}: {e}")
+        with _Counter(job) as cnt:
+            try:
+                fn()
+                why = str(job.error or "")    # 러너가 스스로 보고한 실패
+            except Exception as e:
+                why = f"{type(e).__name__}: {e}"
+                job.log("SYS", f"[오류] {name}: {e}")
 
-        made = len(job.results) - before
+        made = cnt.n
         if not why and made == 0:
             # 열 것이 있어서 러너를 돌렸는데 아무것도 안 나왔다.
             # 조용히 넘어가면 '했다' 로 보이므로 눈에 띄게 남긴다.
