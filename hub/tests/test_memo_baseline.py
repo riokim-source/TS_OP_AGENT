@@ -40,8 +40,8 @@ Last Min 오픈:
 [KK]: 경주
 [VI]: 경주, Toyako Niseko
 [GG]: 경주 12, Toyako Niseko 12
-[TPC]: 경주 12
-[CP]: Kamakura Yokohama 6, Mt. Fuji Signature 8, Amanohashidate 5, Fukuoka Foodie 3, Yufuin Dazaifu 3, Biei Furano 1, Toyako Niseko 24
+[TPC]: 경주 25, 선셋캡슐 East 3, Yufuin Dazaifu 3, Biei Furano 1
+[CP]: Toyako Niseko 12
 [MRT]: Kamakura Yokohama 6, Mt. Fuji Signature 8, Amanohashidate 5, Fukuoka Foodie 3, Yufuin Dazaifu 3, Biei Furano 1, Toyako Niseko 24
 
 [투어일자 08/21]

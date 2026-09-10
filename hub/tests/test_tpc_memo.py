@@ -11,10 +11,10 @@
 
   2) 줄 순서는 [GG] 다음, [CP] 앞.
 
-  3) 수량은 **GG 와 같다** (특별지역 규칙을 쓰지 않는다).
-       Office : q >= 15 -> 절반
-       OP     : q >= 20 -> 절반
-     일본이라고 전량으로 가지 않는다.
+  3) 수량 (2026-09-11 에 CP 와 서로 바꾼 것)
+       TPC : Office q >= 1  -> 전량 / OP q >= 20 -> 절반   (지역 무관)
+       CP  : Office q >= 15 -> 절반 / OP q >= 20 -> 절반   (일본만)
+       MRT : 예전 그대로 — 이 교체에 안 딸려갔다
 
   4) tpc_targets.py 에 없는 상품은 Office/OP 둘 다 건너뛴다.
 
@@ -82,32 +82,55 @@ for name, want in (("경주", True), ("감천미포", True), ("Mt. Fuji Highligh
     if got != want:
         bad.append(f"'{name}' 판정이 {got} (기대 {want})")
 
-# ── 3) 수량 = GG 규칙 ───────────────────────────────────────────────────
+# ── 3) 수량 (CP 와 서로 바꾼 규칙) ──────────────────────────────────────
 print()
-print("  [3] 수량 (GG 와 같아야 한다)")
-print(f"     {'상품':20} {'지역':8} {'q':>3}  {'Office':>7} {'OP':>4}   GG(Office/OP)")
+print("  [3] 수량 — TPC 는 전량/절반, CP 는 GG 와 같다")
+print(f"     {'지역':7} {'q':>3} | {'TPC':>12} | {'CP':>10} | {'MRT':>10}")
 CASES = [
-    ("경주", "Busan", 25, 12, 12),
-    ("경주", "Busan", 15, 7, 0),
-    ("경주", "Busan", 14, 0, 0),
-    ("Mt. Fuji Highlight", "Tokyo", 30, 15, 15),
-    ("Mt. Fuji Highlight", "Tokyo", 19, 9, 0),
-    ("Mt. Fuji Highlight", "Tokyo", 1, 0, 0),     # 일본이라고 전량 아님
+    # 지역,    q,   TPC(Office/OP),  CP(Office/OP),  MRT(Office/OP)
+    ("Tokyo", 1, (1, 0), (0, 0), (1, 0)),
+    ("Tokyo", 14, (14, 0), (0, 0), (14, 14)),
+    ("Tokyo", 15, (15, 0), (7, 0), (15, 15)),
+    ("Tokyo", 19, (19, 0), (9, 0), (19, 19)),
+    ("Tokyo", 20, (20, 10), (10, 10), (20, 10)),
+    ("Tokyo", 30, (30, 15), (15, 15), (30, 15)),
+    # 한국은 CP·MRT 가 아예 없다 (특별지역이 아니다). TPC 는 지역을 안 가린다.
+    ("Busan", 1, (1, 0), (0, 0), (0, 0)),
+    ("Busan", 20, (20, 10), (0, 0), (0, 0)),
+    ("Busan", 30, (30, 15), (0, 0), (0, 0)),
 ]
-for name, area, q, w_off, w_op in CASES:
-    off = calc.tpc_share(name, q, False)
-    op = calc.tpc_share(name, q, True)
-    # 같은 조건에서 GG 가 받는 몫
-    gg_off = calc.distribute(area, name, q, False)["GG"]
-    gg_op = calc.distribute(area, name, q, True)["GG"]
-    def _n(lst):
-        return int(lst[0].rsplit(" ", 1)[1]) if lst else 0
-    mark = "" if (off, op) == (w_off, w_op) else f"  !! 기대 {w_off}/{w_op}"
-    print(f"     {name:20} {area:8} {q:3}  {off:7} {op:4}   {_n(gg_off)}/{_n(gg_op)}{mark}")
-    if (off, op) != (w_off, w_op):
-        bad.append(f"{name} {q}: {off}/{op} (기대 {w_off}/{w_op})")
-    if off != _n(gg_off) or op != _n(gg_op):
-        bad.append(f"{name} {q}: GG 와 다르다 (TPC {off}/{op} vs GG {_n(gg_off)}/{_n(gg_op)})")
+NAME = {"Tokyo": "Mt. Fuji Highlight", "Busan": "경주"}
+
+
+def _n(lst):
+    return int(lst[0].rsplit(" ", 1)[1]) if lst else 0
+
+
+for area, q, w_tpc, w_cp, w_mrt in CASES:
+    name = NAME[area]
+    off = calc.distribute(area, name, q, False)
+    op = calc.distribute(area, name, q, True)
+    got = {ch: (_n(off[ch]), _n(op[ch])) for ch in ("TPC", "CP", "MRT")}
+    want = {"TPC": w_tpc, "CP": w_cp, "MRT": w_mrt}
+    marks = "".join("" if got[c] == want[c] else f"  !! {c} 기대 {want[c]}"
+                    for c in ("TPC", "CP", "MRT"))
+    print(f"     {area:7} {q:3} | {str(got['TPC']):>12} | {str(got['CP']):>10}"
+          f" | {str(got['MRT']):>10}{marks}")
+    for c in ("TPC", "CP", "MRT"):
+        if got[c] != want[c]:
+            bad.append(f"{area} {q} {c}: {got[c]} (기대 {want[c]})")
+
+# CP 는 GG 와 같은 몫이어야 한다 (일본에서)
+print()
+print("  [3-2] CP 가 GG 와 같은 몫인가 (일본)")
+for q in (15, 19, 20, 30):
+    d_off = calc.distribute("Tokyo", "Mt. Fuji Highlight", q, False)
+    d_op = calc.distribute("Tokyo", "Mt. Fuji Highlight", q, True)
+    same = (_n(d_off["CP"]), _n(d_op["CP"])) == (_n(d_off["GG"]), _n(d_op["GG"]))
+    print(f"     q={q:3}  CP {_n(d_off['CP'])}/{_n(d_op['CP'])}"
+          f"  GG {_n(d_off['GG'])}/{_n(d_op['GG'])}  {'같음' if same else '!! 다름'}")
+    if not same:
+        bad.append(f"CP 가 GG 와 다르다 (q={q})")
 
 # ── 4) 언어 표기 ────────────────────────────────────────────────────────
 print()
@@ -115,9 +138,9 @@ print("  [4] 언어 표기 (Office 엔 안 붙는다)")
 KR = RowInput(area="Busan", product="경주", qty=25)
 JP = RowInput(area="Tokyo", product="Mt. Fuji Highlight", qty=30)
 for label, rows, is_op, want in (
-        ("Office 한국", [KR], False, "경주 12"),
+        ("Office 한국", [KR], False, "경주 25"),
         ("OP     한국", [KR], True, "경주(중) 12"),
-        ("Office 일본", [JP], False, "Mt. Fuji Highlight 15"),
+        ("Office 일본", [JP], False, "Mt. Fuji Highlight 30"),
         ("OP     일본", [JP], True, "Mt. Fuji Highlight(한) 15")):
     got = memo_line(rows, is_op, "TPC")
     mark = "" if got == want else f"   !! 기대 '{want}'"
@@ -157,7 +180,7 @@ r = RowInput(area="Busan", product="경주", qty=25,
              languages_all=LANGS, languages_sel=["english"])
 off = memo_line([r], False, "TPC")
 print(f"     Office (영어만)                     -> '{off}'")
-if off != "경주 12":
+if off != "경주 25":
     bad.append(f"Office 가 언어 제한에 걸렸다: '{off}'")
 
 # ── 6) 계획에는 표시 없는 이름이 간다 ───────────────────────────────────
@@ -172,15 +195,20 @@ if names != ["Mt. Fuji Highlight", "경주"]:
 
 # ── 7) CP 는 건드리지 않았다 ────────────────────────────────────────────
 print()
-print("  [7] CP 는 예전 그대로")
+print("  [7] CP / MRT")
 cp_off = memo_line([JP], False, "CP")
 cp_op = memo_line([JP], True, "CP")
 print(f"     Office [CP]: {cp_off}")
 print(f"     OP     [CP]: {cp_op}")
-if cp_off != "Mt. Fuji Highlight 30":      # 특별지역 Office: q>=1 전량
-    bad.append(f"CP Office 규칙이 바뀌었다: '{cp_off}'")
-if cp_op != "Mt. Fuji Highlight 15":       # 특별지역 OP: q>=20 반반
-    bad.append(f"CP OP 규칙이 바뀌었다: '{cp_op}'")
+# CP 는 이제 GG 와 같은 규칙이다 (2026-09-11 교체)
+if cp_off != "Mt. Fuji Highlight 15":      # Office 30 -> 절반
+    bad.append(f"CP Office 규칙이 다르다: '{cp_off}'")
+if cp_op != "Mt. Fuji Highlight 15":       # OP 30 -> 절반
+    bad.append(f"CP OP 규칙이 다르다: '{cp_op}'")
+mrt_off = memo_line([JP], False, "MRT")
+print(f"     Office [MRT]: {mrt_off}   (교체에 안 딸려갔는지)")
+if mrt_off != "Mt. Fuji Highlight 30":
+    bad.append(f"MRT 가 교체에 딸려갔다: '{mrt_off}'")
 
 from core import opens  # noqa: E402
 if "CP" in opens.IMPLEMENTED:
@@ -195,4 +223,4 @@ if bad:
     for b in bad:
         print("  !!", b)
     raise SystemExit(f"!! {len(bad)}건 어긋남")
-print("전부 통과 — [TPC] 는 GG 규칙 · 지정 목록만 · OP 에만 언어 표기, CP 는 그대로")
+print("전부 통과 — TPC 전량/절반 · CP 는 GG 와 같음 · MRT 그대로 · 지정 목록/언어 조건은 TPC 에만")

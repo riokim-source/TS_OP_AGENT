@@ -56,21 +56,25 @@ def distribute_special(product: str, q: int, is_op: bool) -> dict[str, list[str]
     """
     out: dict[str, list[str]] = {ch: [] for ch in C.CHANNELS}
 
-    # CP / MRT
+    # ── MRT ──────────────────────────────────────────────────────────────
+    # ⚠️ MRT 는 예전 그대로다. CP 와 한 덩어리로 적혀 있었을 뿐, 규칙은 별개다.
     if not is_op:
         if q >= 1:
-            out["CP"].append(f"{product} {q}")
             out["MRT"].append(f"{product} {q}")
     else:
         if 10 <= q < 20:
             out["MRT"].append(f"{product} {q}")
         elif q >= 20:
-            cp = q // 2
-            mrt = q - cp
-            if cp > 0:
-                out["CP"].append(f"{product} {cp}")
-            if mrt > 0:
-                out["MRT"].append(f"{product} {mrt}")
+            out["MRT"].append(f"{product} {q - q // 2}")
+
+    # ── CP ───────────────────────────────────────────────────────────────
+    # ⚠️ 2026-09-11: CP 와 TPC 의 수량 규칙을 서로 바꿨다.
+    #    CP 가 GG 와 같은 규칙을 쓰고 (Office 15↑ 절반 / OP 20↑ 절반),
+    #    TPC 가 예전 CP 규칙(Office 전량 / OP 20↑ 절반)을 쓴다.
+    #    MRT 는 그대로다.
+    cp_floor = C.THRESHOLD_OP if is_op else C.THRESHOLD_OFFICE
+    if q >= cp_floor:
+        out["CP"].append(f"{product} {q // 2}")
 
     # KLOOK / GG / VI  (KK 는 특별지역에서 제외)
     threshold = C.THRESHOLD_OP if is_op else C.THRESHOLD_OFFICE
@@ -127,15 +131,16 @@ def tpc_share(product: str, q: int, is_op: bool) -> int:
     ⚠️ 지정 목록(tpc_targets.py)에 없는 상품은 Office/OP 둘 다 건너뛴다.
        봇이 열 수 없는 것을 메모에 적으면 사람이 손으로 찾아 열어야 한다.
 
-    수량 규칙은 **GG 와 같다** (특별지역 규칙을 쓰지 않는다).
-        Office : q >= 15 -> 절반
-        OP     : q >= 20 -> 절반
-    지역과 무관하다. 일본이라고 전량으로 가지 않는다.
+    수량 규칙 (2026-09-11 에 CP 와 서로 바꾼 것)
+        Office : q >= 1  -> 전량
+        OP     : q >= 20 -> 절반   (20 미만은 적지 않는다)
+    지역과 무관하다 — 한국 상품도 같은 규칙을 쓴다.
     """
     if q <= 0 or not in_tpc_list(product):
         return 0
-    threshold = C.THRESHOLD_OP if is_op else C.THRESHOLD_OFFICE
-    return q // 2 if q >= threshold else 0
+    if not is_op:
+        return q
+    return q // 2 if q >= C.THRESHOLD_OP else 0
 
 
 def distribute(area: str, product: str, qty: int, is_op: bool) -> dict[str, list[str]]:
