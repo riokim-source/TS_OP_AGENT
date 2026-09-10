@@ -924,12 +924,28 @@ def submit_page(page: CdpPage, log=lambda *_: None, timeout: float = 180.0) -> d
     """
     화면 아래 Submit. **여기까지 해야 서버에 반영된다.**
 
-    OK 는 화면 안에서만 바꾼다. 예전 프로토타입이 OK 까지만 하고 '마감했다' 고
-    보고했다면 재고는 그대로 열려 있었을 것이다.
+    OK 는 초안(draft)으로만 들어간다. 실제로 확인한 것:
+        OK -> submitProductDraft {draftTypes:["PriceAndStock"], type:2}
+              -> Ack "Success", draftVersion 이 하나 오른다
+    화면의 달력은 판매중인 값을 보여주므로 OK 만으로는 아무것도 안 바뀐 것처럼 보인다.
 
     반영이 느릴 수 있어서 넉넉히 기다린다. 다시 누르지 않는다 — 두 번 제출하면
     서버에 그만큼 부담이 간다.
+
+    ⚠️ OK 가 띄운 'Saved' 토스트가 아직 화면에 남아 있는 채로 Submit 을 누른다.
+       예전에는 그 토스트를 Submit 의 결과로 착각하고 곧바로 빠져나와서,
+       Submit 이 처리될 시간도 주지 않고 새로고침해 버렸다.
+       (2026-09-10: OK/Submit/Saved 가 전부 같은 초에 찍혔다. 6초 뒤 새로고침.
+        그날 TPC 6건이 '안 바뀜' 으로 끝났다)
+       그래서 누르기 전에 지금 떠 있는 안내를 적어 두고, **그 뒤에 새로 뜬 것만**
+       Submit 의 결과로 센다.
     """
+    before_msgs = set(page.js(r"""(() => [...document.querySelectorAll(
+        '.ant-message-notice, .ant-notification-notice')]
+        .map(e => e.innerText.split('\n').join(' | ').slice(0, 200)))()""") or [])
+    if before_msgs:
+        log(f"(누르기 전 화면에 남아 있던 안내 {len(before_msgs)}개는 세지 않습니다)")
+
     r = page.js(r"""(() => {
         const b = document.querySelector('.submit-audit-btn');
         if (!b) return 'missing';
@@ -953,12 +969,20 @@ def submit_page(page: CdpPage, log=lambda *_: None, timeout: float = 180.0) -> d
           }))()""") or {}
         for key in ("modals", "messages"):
             for t in state.get(key) or []:
-                if t and t not in seen[key]:
-                    seen[key].append(t)
-                    log(f"[{key}] {t}")
+                if not t or t in seen[key]:
+                    continue
+                if key == "messages" and t in before_msgs:
+                    continue          # 누르기 전부터 있던 것 — Submit 의 결과가 아니다
+                seen[key].append(t)
+                log(f"[{key}] {t}")
         if (seen["messages"] or seen["modals"]) and not state.get("spinning"):
             break
         time.sleep(1.5)
+    else:
+        # 새 안내도 창도 안 뜬 채로 시간이 다 갔다. 됐는지 안 됐는지 모른다.
+        # 모르는 것을 '했다' 고 보고하지 않는다.
+        raise CdpError(f"Submit 을 눌렀는데 {timeout:.0f}초 동안 아무 응답이 "
+                       f"없었습니다 (안내도 창도 안 떴습니다)")
 
     # ⚠️ Submit 뒤에 창이 하나 더 뜨는 경우 ('정말 제출할까요?' 같은).
     #    여기서 아무 버튼이나 누르면 안 된다 — primary 를 누르면 확정이고
