@@ -968,8 +968,7 @@ def submit_page(page: CdpPage, log=lambda *_: None, timeout: float = 180.0) -> d
     #    (실제 운영에서 어떤 창이 뜨는지 확인한 뒤 여기에 처리를 추가한다)
     left = page.js(r"""(() => __tpc.visibleModals()
         .filter(w => !__tpc.isOurModal(w))
-        .map(w => w.innerText.split('
-').join(' | ').slice(0, 300)))()""") or []
+        .map(w => w.innerText.split('\n').join(' | ').slice(0, 300)))()""") or []
     if left:
         raise CdpError("Submit 뒤에 확인 창이 남아 있습니다. 무엇을 눌러야 하는지 "
                        "정해지지 않아 중단합니다: " + " // ".join(left)[:400])
