@@ -194,8 +194,13 @@ if "product-name-text" not in DOM_SRC:
 print("  [5] 날짜 안전장치 — 하나만 골랐을 때만 OK")
 if 'input[type=radio][value="2"]' not in DOM_SRC:
     bad.append("'날짜 지정' 라디오(value=2)로 넘어가는 코드가 없다")
-if "sel.length === 1" not in DOM_SRC:
+# ⚠️ 근거가 바뀌었다. 달력 칸의 'selected' 는 커서라서 아무것도 안 눌러도
+#    오늘 날짜에 붙어 있다 (2026-09-10 실측). 진짜로 고른 날짜는 창 오른쪽
+#    칸(.calendar-right)에 들어간다. 거기서 '정확히 하나' 를 확인해야 한다.
+if "got.length === 1" not in DOM_SRC:
     bad.append("고른 날짜가 정확히 하나인지 확인하지 않는다")
+if "calendar-right" not in DOM_SRC:
+    bad.append("고른 날짜를 창 오른쪽 칸(.calendar-right)에서 확인하지 않는다")
 if "picked != [target_date]" not in TPC_SRC:
     bad.append("OK 를 누르기 전에 고른 날짜를 다시 확인하지 않는다")
 # 순서를 볼 때는 상품 하나를 처리하는 함수 안만 본다.

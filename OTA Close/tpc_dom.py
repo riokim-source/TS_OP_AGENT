@@ -592,9 +592,19 @@ def dialog_state(page: CdpPage) -> dict:
           menu: dd ? [...dd.querySelectorAll('[role="menuitemcheckbox"]')]
                        .map(e => ({name: e.innerText.trim(),
                                    on: e.getAttribute('aria-checked') === 'true'})) : null,
-          dates: [...m.querySelectorAll('td.ant-picker-cell')]
-                   .filter(e => e.className.includes('selected'))
-                   .map(e => e.getAttribute('title')),
+          // ⚠️ 고른 날짜의 근거는 **오른쪽 칸(.calendar-right)에 들어간 것**이다.
+          //    달력 칸의 'ant-picker-cell-selected' 는 커서 위치일 뿐이라
+          //    아무것도 안 눌러도 오늘 날짜에 이미 붙어 있다.
+          //    (2026-09-10: 그걸 근거로 삼는 바람에 날짜가 안 들어간 채로
+          //     OK 를 눌렀고, 서버로 가는 본문에 그 날짜가 아예 없었다)
+          dates: [...(m.querySelector('.calendar-right') || {querySelectorAll: () => []})
+                    .querySelectorAll('*')]
+                   .map(e => (e.innerText || '').trim())
+                   .filter(t => /^\d{4}-\d{2}-\d{2}$/.test(t))
+                   .filter((t, i, a) => a.indexOf(t) === i),
+          cursor: [...m.querySelectorAll('td.ant-picker-cell')]
+                    .filter(e => e.className.includes('selected'))
+                    .map(e => e.getAttribute('title')),
           has_date_panel: !!m.querySelector('td.ant-picker-cell'),
         });
       })()""")
@@ -797,26 +807,83 @@ def dialog_set_by_date(page: CdpPage, date_str: str, log=lambda *_: None) -> Non
 
     _dialog_goto_month(page, date_str)
 
-    r = page.js(r"""(() => {
+    # ⚠️ 이 달력만은 **진짜 마우스 입력**으로 눌러야 한다.
+    #    JS 로 만든 클릭(__tpc.mclick)은 antd 의 겉모습(cell-selected 클래스)만
+    #    옮기고 앱 안에는 안 들어간다. 2026-09-10 에 실제로 확인한 것:
+    #        JS 클릭   -> .calendar-right 요소 0개, 글 ''
+    #        진짜 클릭 -> .calendar-right 요소 4개, 글 '2026-09-11'
+    #    그래서 OK 가 서버로 보내는 본문(53만 자)에 그 날짜가 아예 없었고,
+    #    TPC 마감이 며칠 동안 '눌렀는데 안 바뀜' 으로 끝났다.
+    #    창의 다른 것들(패키지·대상·라디오)은 JS 클릭으로도 잘 들어간다.
+    # ⚠️ 반드시 **창 안에서** 찾는다. 뒤에 깔린 상품 화면에도 같은 날짜 칸이 있어서
+    #    document 에서 찾으면 창 밖의 칸을 눌러 버린다 (덮개에 막혀 아무 일도 안 난다).
+    chk = page.js(r"""(() => {
         const m = __tpc.saleModal();
+        if (!m) return 'no-modal';
         const td = m.querySelector('td[title="%s"]');
         if (!td) return 'missing';
         if (td.className.includes('disabled')) return 'disabled';
-        __tpc.mclick(td.querySelector('.ant-picker-cell-inner') || td);
         return 'ok';
       })()""" % date_str)
-    if r == "disabled":
+    if chk == "disabled":
         raise CdpError(f"{date_str} 는 창에서 고를 수 없는 날짜입니다 (지난 날짜)")
-    if r != "ok":
-        raise CdpError(f"창의 달력에 {date_str} 칸이 없습니다")
+    if chk != "ok":
+        raise CdpError(f"창의 달력에 {date_str} 칸이 없습니다 ({chk})")
 
+    real_click(page, r"""(() => {
+        const m = __tpc.saleModal();
+        const td = m && m.querySelector('td[title="%s"]');
+        return td ? (td.querySelector('.ant-picker-cell-inner') || td) : null;
+      })()""" % date_str, what=f"{date_str} 칸")
+
+    # ⚠️ 판정 근거도 클래스가 아니라 오른쪽 칸에 들어간 날짜다.
+    #    클래스는 아무것도 안 눌러도 오늘 날짜에 붙어 있다 (커서일 뿐이다).
     page.wait(r"""(() => {
         const m = __tpc.saleModal();
-        const sel = [...m.querySelectorAll('td.ant-picker-cell')]
-          .filter(e => e.className.includes('selected')).map(e => e.getAttribute('title'));
-        return sel.length === 1 && sel[0] === '%s';
-      })()""" % date_str, timeout=15, what=f"{date_str} 한 날짜만 선택")
+        const r = m && m.querySelector('.calendar-right');
+        if (!r) return false;
+        const got = [...r.querySelectorAll('*')].map(e => (e.innerText || '').trim())
+          .filter(t => /^\d{4}-\d{2}-\d{2}$/.test(t))
+          .filter((t, i, a) => a.indexOf(t) === i);
+        // 하나만 골랐을 때만 통과. 여러 날이 들어가 있으면 OK 를 누르면 안 된다.
+        return got.length === 1 && got[0] === '%s';
+      })()""" % date_str, timeout=15,
+              what=f"{date_str} 한 날짜만 고른 날짜 칸에 들어감")
     log(f"Set by Date: {date_str}")
+
+
+def real_click(page: CdpPage, el_js: str, what: str = "") -> None:
+    """
+    진짜 마우스 입력으로 누른다 (CDP Input.dispatchMouseEvent).
+
+    el_js 는 **누를 요소를 돌려주는 JS 식**이다. 셀렉터 문자열이 아니라 식으로
+    받는 이유는, 창 안으로 범위를 좁혀서 찾아야 하는 자리가 있기 때문이다.
+
+    JS 로 만든 이벤트는 화면만 바꾸고 앱에는 안 닿는 자리가 있다. 그런 곳에 쓴다.
+    느리고 화면 좌표에 기대므로 꼭 필요한 곳에만 쓴다.
+    """
+    import json as _json
+    box = page.js(r"""(() => {
+        const el = %s;
+        if (!el) return 'missing';
+        el.scrollIntoView({block: 'center'});
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height) return 'hidden';
+        return JSON.stringify({x: r.x + r.width / 2, y: r.y + r.height / 2});
+      })()""" % el_js)
+    label = what or "누를 것"
+    if box in (None, "missing"):
+        raise CdpError(f"{label} 을 찾지 못했습니다")
+    if box == "hidden":
+        raise CdpError(f"{label} 이 화면에 안 보입니다")
+    pt = _json.loads(box) if isinstance(box, str) else box
+    page.send("Input.dispatchMouseEvent", type="mouseMoved",
+              x=pt["x"], y=pt["y"], button="none", clickCount=0)
+    time.sleep(0.12)
+    for ty in ("mousePressed", "mouseReleased"):
+        page.send("Input.dispatchMouseEvent", type=ty, x=pt["x"], y=pt["y"],
+                  button="left", clickCount=1)
+        time.sleep(0.12)
 
 
 def _dialog_goto_month(page: CdpPage, date_str: str) -> None:
