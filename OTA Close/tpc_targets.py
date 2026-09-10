@@ -23,11 +23,16 @@ TPC(Trip.com / vBooking) 에서 매일 마감·오픈하는 상품 목록. **목
 """
 from __future__ import annotations
 
-# 라우팅 채널 코드.
+# 채널 코드.
 #
-# ⚠️ 허브의 라스트미닛 계산은 이 OTA 를 'CP' 라는 key 로 들고 있고
-#    (hub/core/lastmin/constants.py), 예약 파일에는 'TPC' 로 들어온다.
-#    봇·화면에서 부르는 이름은 TPC 로 통일하고, 허브 라우팅표의 key 만 CP 를 쓴다.
+# ⚠️ [TPC] 와 [CP] 는 **다른 채널이다.**
+#      TPC : 이 봇이 여닫는 Trip.com 채널. 라스트미닛 메모의 [TPC] 줄이고,
+#            오픈 계획의 channel 도 'TPC' 다 (2026-09-10 에 CP 에서 갈라 냈다).
+#      CP  : 예전부터 있던 다른 채널. 봇이 없고 메모에 수량만 적힌다.
+#
+# ⚠️ 다만 **Chrome 라우팅표의 key 만** 아직 'CP' 다 (hub/data/routing.json).
+#    그건 '어느 Chrome 창으로 들어가는가' 를 정하는 별개의 이름표라서 그대로 둔다.
+#    나중에 CP 에도 봇이 생기면 그때 라우팅 key 를 갈라야 한다.
 CHANNEL = "TPC"
 ROUTING_CHANNEL = "CP"
 

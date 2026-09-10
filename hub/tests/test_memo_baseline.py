@@ -40,6 +40,7 @@ Last Min 오픈:
 [KK]: 경주
 [VI]: 경주, Toyako Niseko
 [GG]: 경주 12, Toyako Niseko 12
+[TPC]: 경주 12
 [CP]: Kamakura Yokohama 6, Mt. Fuji Signature 8, Amanohashidate 5, Fukuoka Foodie 3, Yufuin Dazaifu 3, Biei Furano 1, Toyako Niseko 24
 [MRT]: Kamakura Yokohama 6, Mt. Fuji Signature 8, Amanohashidate 5, Fukuoka Foodie 3, Yufuin Dazaifu 3, Biei Furano 1, Toyako Niseko 24
 
@@ -49,6 +50,7 @@ Last Min 10시 후 예약:
 [KK]: 
 [VI]: 
 [GG]: Shakotan Otaru 2
+[TPC]: 
 [CP]: 
 [MRT]: Kamakura Highlight 2, Amanohashidate 1, Kumamoto Takachiho 2"""
 
@@ -58,6 +60,7 @@ Last Min 오픈:
 [KK]: 경주
 [VI]: 경주, Toyako Niseko
 [GG]: 경주 12, Toyako Niseko 12
+[TPC]: 경주(중) 12
 [CP]: Toyako Niseko 12
 [MRT]: Toyako Niseko 12
 
@@ -67,6 +70,7 @@ Last Min 10시 후 예약:
 [KK]: 
 [VI]: 
 [GG]: Shakotan Otaru 2
+[TPC]: 
 [CP]: 
 [MRT]: Kamakura Highlight 2, Amanohashidate 1, Kumamoto Takachiho 2"""
 

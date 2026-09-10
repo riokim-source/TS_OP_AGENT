@@ -36,13 +36,16 @@ CAPABILITY: dict[str, str | None] = {
     # 수량이 아니라 판매 재개다. vBooking 은 날짜별 재고를 999 로 잡아 두고
     # (화면에 "Sold inventory: 0/999") 실제로는 On/off 로만 운영한다.
     # 2026-09-09 지정 상품 10개를 읽어서 확인했다. 그래서 숫자를 받지 않는다.
-    "CP": "resume",
+    "TPC": "resume",
+    "CP": None,       # 봇 없음 (TPC 와 다른 채널)
 }
 
-IMPLEMENTED: set[str] = {"KLOOK", "MRT", "GG", "VI", "CP"}
+IMPLEMENTED: set[str] = {"KLOOK", "MRT", "GG", "VI", "TPC"}
 
 NOT_IMPLEMENTED_REASON: dict[str, str] = {
     "KK": "KKday 판매 재개(Resume selling)는 kkday.py 의 Ceased selling 반대 동작 구현이 필요합니다.",
+    "CP": "CP 는 아직 마감·오픈 봇이 없습니다 (메모에 수량만 적힙니다). "
+          "TPC(Trip.com) 와는 다른 채널입니다.",
 }
 
 

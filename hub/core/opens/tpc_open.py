@@ -34,7 +34,7 @@ import threading
 from ..paths import ota_close_dir
 
 RESULT_MARKER = "##TPC_RESULT##"
-CHANNEL = "CP"          # 계획/메모에서 쓰는 key
+CHANNEL = "TPC"         # 계획/메모에서 쓰는 key ([TPC] 줄)
 LABEL = "TPC"           # 사람이 보는 이름
 
 
@@ -66,7 +66,9 @@ def resolve(plan: list[dict]) -> dict:
     """
     오픈 계획 -> 열어야 할 TPC 상품.
 
-    계획에서 channel == "CP" 인 줄만 본다. 그게 OP 텍스트에 [CP] 로 찍힌 것이다.
+    계획에서 channel == "TPC" 인 줄만 본다. 그게 OP 텍스트에 [TPC] 로 찍힌 것이다.
+
+    ⚠️ [CP] 와 헷갈리지 말 것. CP 는 다른 채널이고 봇이 없다.
     맵핑에 없는 이름은 열지 않고 사유를 남긴다 — 비슷하다고 골라서 열면
     엉뚱한 상품의 재고가 열린다.
     """

@@ -246,6 +246,39 @@ def klook_variant_name(base: str, lang: str) -> str:
     return f"{base}({suffix})" if suffix else base
 
 
+def tpc_korean_ok(r: RowInput) -> bool:
+    """
+    그날 이 투어를 한국어로 받을 수 있는가.
+
+    언어를 제한하지 않았으면 한국어도 되는 날이다. 일부만 골랐으면 그 안에
+    한국어가 있어야 한다. Klook 이 언어별 상품을 고르는 것과 같은 근거를 쓴다.
+    """
+    if not r.language_restricted():
+        return True
+    return "korean" in r.selected_languages()
+
+
+def tpc_memo_name(base: str, r: RowInput, is_op: bool) -> str:
+    """
+    TPC 메모에 적을 상품명.
+
+    Office 는 상품명만 쓴다 — 기존 메모 형식을 한 글자도 바꾸지 않기 위해서다.
+
+    OP 는 **어느 패키지를 여는지**가 중요해서 언어를 이름에 붙인다.
+    Klook 과 같은 표기다.
+        한국 상품 -> (중)   Trip.com 에서 파는 것은 중국어 가이드 패키지다
+        일본 상품 -> (한)   한국어 가이드 패키지를 연다
+    그 밖의 지역은 어느 패키지인지 정해진 것이 없어 상품명만 쓴다.
+    """
+    if not is_op:
+        return base
+    if r.area in C.SPECIAL_CP_MRT:
+        return f"{base}({C.LANG_SUFFIX['korean']})"
+    if r.area in C.KOREA_AREAS:
+        return f"{base}({C.LANG_SUFFIX['chinese']})"
+    return base
+
+
 def klook_memo_names(base: str, r: RowInput) -> list[str]:
     """
     OP 메모 / 오픈에 쓸 Klook 상품명.
@@ -397,6 +430,14 @@ def build_panel_memo(rows: list[RowInput], is_latest: bool, is_op: bool) -> dict
                             # 언어는 보통 상품명에 이미 들어가 있다. '(중국어 불가)' 를 또
                             # 붙이면 같은 투어가 두 번 적힌 것처럼 보여서 읽기만 나빠진다.
                             auto[ch].append(_fmt(nm, q, kn))
+                    elif ch == "TPC":
+                        # ⚠️ OP 의 일본 상품은 한국어 가이드 패키지를 연다.
+                        #    그날 한국어를 못 받으면 열 것이 없으므로 적지 않는다.
+                        if is_op and r.area in C.SPECIAL_CP_MRT and not tpc_korean_ok(r):
+                            continue
+                        # 언어는 이름에 들어가므로 '(중국어 불가)' 를 또 붙이지 않는다.
+                        auto[ch].append(_fmt(tpc_memo_name(base, r, is_op),
+                                             qty, note_nolang))
                     else:
                         auto[ch].append(_fmt(base, qty, note))
 
@@ -417,6 +458,11 @@ def build_panel_memo(rows: list[RowInput], is_latest: bool, is_op: bool) -> dict
                     kn = _klook_note(r, note_nolang, fb)
                     for nm, qq in tg:
                         manual[ch].append(_fmt(nm, qq, kn))
+                elif ch == "TPC":
+                    # 사람이 직접 적어 넣은 수량은 조건으로 지우지 않는다.
+                    # 적었다는 것 자체가 그날 그렇게 하겠다는 뜻이다.
+                    manual[ch].append(_fmt(tpc_memo_name(base, r, is_op),
+                                           q, note_nolang))
                 else:
                     manual[ch].append(_fmt(base, q, note))
 

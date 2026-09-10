@@ -28,6 +28,7 @@ CASES = [
 ]
 
 _QTY = re.compile(r"^(?P<name>.+?)\s+(?P<qty>\d+)$")
+_TPC_LANG = re.compile(r"\((?:한|중|일)\)")
 
 
 def memo_entries(rows) -> dict:
@@ -43,6 +44,13 @@ def memo_entries(rows) -> dict:
         table = out.setdefault(ch, {})
         for part in [x.strip() for x in body.split(",") if x.strip()]:
             part = re.sub(r"\s*\([^)]*\)\s*$", "", part).strip()   # 제한 표기 제거
+            if ch == "TPC":
+                # ⚠️ TPC 의 (한)/(중) 은 '어느 패키지를 여는가' 를 사람에게 알려주는
+                #    표시일 뿐, 다른 상품이 아니다 (상품번호 하나 안에 언어별
+                #    패키지가 들어 있다). 봇은 tpc_targets 의 이름을 정확히 그대로
+                #    찾으므로 계획에는 표시 없는 이름이 간다.
+                #    Klook 은 다르다 — 거기서는 (한) 이 진짜 다른 상품이라 안 지운다.
+                part = _TPC_LANG.sub("", part).strip()
             q = _QTY.match(part)
             if q:
                 table[q.group("name").strip()] = int(q.group("qty"))

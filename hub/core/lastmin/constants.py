@@ -8,7 +8,14 @@ constants.py
 from __future__ import annotations
 
 # OTA 채널 (출력 순서 = 메모 줄 순서)
-CHANNELS: list[str] = ["KLOOK", "KK", "VI", "GG", "CP", "MRT"]
+#
+# ⚠️ [CP] 와 [TPC] 는 **다른 채널이다.** 이름이 비슷해서 헷갈리기 쉽다.
+#      CP  : 예전부터 있던 채널. 마감·오픈 봇이 없고 계획도 없다.
+#            수량 수집 텍스트만 지금 그대로 유지한다.
+#      TPC : 2026-09 에 새로 붙인 Trip.com 채널. tpc.py 봇이 실제로 여닫는다.
+#            tpc_targets.py 에 적어 둔 상품만 다룬다.
+#    둘을 합치면 한쪽 규칙이 다른 쪽 재고를 건드린다. 줄도 규칙도 따로 둔다.
+CHANNELS: list[str] = ["KLOOK", "KK", "VI", "GG", "TPC", "CP", "MRT"]
 
 # 채널 -> 예약 파일 Agency 컬럼 코드
 #
@@ -33,6 +40,10 @@ REGION_GROUPS: list[tuple[str, list[str]]] = [
     ("UK",        ["London"]),
 ]
 AREA_ORDER: list[str] = [a for _g, areas in REGION_GROUPS for a in areas]
+
+# 한국 Area. REGION_GROUPS 에서 뽑는다 — 목록을 두 벌로 두지 않기 위해서다.
+KOREA_AREAS: frozenset[str] = frozenset(
+    next(areas for name, areas in REGION_GROUPS if name == "Korea"))
 
 # CP / MRT 를 별도 규칙으로 태우는 지역 = Japan 전체
 #   Office: 1명만 있어도 CP·MRT 전량 / OP: 10~19 MRT만, 20+ 반반

@@ -87,6 +87,57 @@ def distribute_special(product: str, q: int, is_op: bool) -> dict[str, list[str]
     return out
 
 
+_TPC_CACHE: dict | None = None
+
+
+def _tpc_targets():
+    """
+    OTA Close/tpc_targets.py 를 읽는다. **목록의 주인은 그 파일 하나다.**
+
+    여기에 목록을 복사해 두면 안 된다. 두 곳이 어긋나면 메모에는 적혀 있는데
+    봇은 그 상품을 모르는 상황이 된다.
+    """
+    global _TPC_CACHE
+    if _TPC_CACHE is not None:
+        return _TPC_CACHE
+    _TPC_CACHE = {"ok": False, "find": None}
+    try:
+        from ..paths import ota_close_dir, ensure_on_syspath
+        if ensure_on_syspath(ota_close_dir()):
+            import tpc_targets as tt      # type: ignore
+            _TPC_CACHE = {"ok": True, "find": tt.find_by_tour}
+    except Exception:
+        pass
+    return _TPC_CACHE
+
+
+def in_tpc_list(product: str) -> bool:
+    """그 상품이 TPC 지정 목록에 있는가 (이름이 정확히 같을 때만)."""
+    t = _tpc_targets()
+    return bool(t["ok"] and t["find"](product) is not None)
+
+
+def tpc_share(product: str, q: int, is_op: bool) -> int:
+    """
+    TPC(Trip.com) 한 상품의 수량. 0 이면 메모에 안 적는다.
+
+    ⚠️ [CP] 와 **다른 채널이다.** CP 는 아직 봇이 없고 수집 텍스트만 그대로 두며,
+       TPC 는 2026-09 에 새로 붙인 채널로 tpc.py 봇이 실제로 여닫는다.
+
+    ⚠️ 지정 목록(tpc_targets.py)에 없는 상품은 Office/OP 둘 다 건너뛴다.
+       봇이 열 수 없는 것을 메모에 적으면 사람이 손으로 찾아 열어야 한다.
+
+    수량 규칙은 **GG 와 같다** (특별지역 규칙을 쓰지 않는다).
+        Office : q >= 15 -> 절반
+        OP     : q >= 20 -> 절반
+    지역과 무관하다. 일본이라고 전량으로 가지 않는다.
+    """
+    if q <= 0 or not in_tpc_list(product):
+        return 0
+    threshold = C.THRESHOLD_OP if is_op else C.THRESHOLD_OFFICE
+    return q // 2 if q >= threshold else 0
+
+
 def distribute(area: str, product: str, qty: int, is_op: bool) -> dict[str, list[str]]:
     """한 상품(=화면 한 줄)의 수량을 채널별로 분배."""
     out: dict[str, list[str]] = {ch: [] for ch in C.CHANNELS}
@@ -94,9 +145,16 @@ def distribute(area: str, product: str, qty: int, is_op: bool) -> dict[str, list
     if q <= 0:
         return out
     if area in C.SPECIAL_CP_MRT:
-        return distribute_special(product, q, is_op)
-    threshold = C.THRESHOLD_OP if is_op else C.THRESHOLD_OFFICE
-    return distribute_general(product, q, threshold)
+        out = distribute_special(product, q, is_op)
+    else:
+        threshold = C.THRESHOLD_OP if is_op else C.THRESHOLD_OFFICE
+        out = distribute_general(product, q, threshold)
+
+    # TPC 는 지역 규칙을 타지 않는다. 지정 목록에 있으면 GG 와 같은 몫을 준다.
+    n = tpc_share(product, q, is_op)
+    if n > 0:
+        out["TPC"].append(f"{product} {n}")
+    return out
 
 
 _QTY_TAIL = re.compile(r"^(?P<name>.+?)\s+(?P<qty>\d+)\s*$")

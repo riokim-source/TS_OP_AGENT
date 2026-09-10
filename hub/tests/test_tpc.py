@@ -312,8 +312,10 @@ from core.opens import tpc_open  # noqa: E402
 
 if "tpc" not in runner.AGENCIES:
     bad.append("마감 실행기에 tpc 가 없다")
+# ⚠️ 이건 **Chrome 라우팅** 이름표다 (hub/data/routing.json). 메모 채널과 다르다.
+#    메모/계획의 채널은 'TPC' 이고, 어느 Chrome 으로 들어가는지는 아직 'CP' 를 쓴다.
 if runner.AGENCY_CHANNEL.get("tpc") != "CP":
-    bad.append("tpc -> CP 채널 연결이 없다")
+    bad.append("tpc -> (Chrome 라우팅) CP 연결이 없다")
 if set(runner.AGENCY_REGIONS.get("tpc", [])) != {"KOREA", "JAPAN", "AUSTRALIA"}:
     bad.append(f"tpc 지역이 다르다: {runner.AGENCY_REGIONS.get('tpc')}")
 # 지역 필터가 TPC 에도 걸려야 한다. 빠지면 한 지역만 골라도 전 지역이 돈다.
@@ -330,12 +332,17 @@ if not runner._SUMMARY_RE.search("[  TPC] 성공   3 / 실패   0 / 스킵   7")
 if not runner._RESULT_RE.search("[TPC] success=3 failed=0 skipped=7"):
     bad.append("TPC 집계 줄을 못 읽는다")
 
-if "CP" not in opens.IMPLEMENTED:
-    bad.append("오픈 지원 목록에 CP 가 없다")
-if opens.CAPABILITY.get("CP") != "resume":
-    bad.append(f"CP 오픈 방식이 다르다: {opens.CAPABILITY.get('CP')}")
-if "CP" in opens.NOT_IMPLEMENTED_REASON:
-    bad.append("CP 가 아직 '미구현' 으로 남아 있다")
+# ⚠️ 오픈 계획의 채널은 'TPC' 다. [CP] 는 다른 채널이고 봇이 없다 (2026-09-10 분리).
+if "TPC" not in opens.IMPLEMENTED:
+    bad.append("오픈 지원 목록에 TPC 가 없다")
+if opens.CAPABILITY.get("TPC") != "resume":
+    bad.append(f"TPC 오픈 방식이 다르다: {opens.CAPABILITY.get('TPC')}")
+if "TPC" in opens.NOT_IMPLEMENTED_REASON:
+    bad.append("TPC 가 아직 '미구현' 으로 남아 있다")
+if "CP" in opens.IMPLEMENTED:
+    bad.append("CP 가 오픈 지원 목록에 있다 — CP 는 봇이 없다")
+if opens.CAPABILITY.get("CP") is not None:
+    bad.append("CP 에 오픈 방식이 붙어 있다 — TPC 와 헷갈린 것이다")
 
 RUN_ALL = (ROOT / "hub" / "core" / "opens" / "run_all.py").read_text(encoding="utf-8")
 if "tpc_open.run(" not in RUN_ALL:
@@ -347,15 +354,15 @@ if not ok:
     bad.append(f"tpc_open 이 봇 파일을 못 찾는다: {detail}")
 
 # OP 텍스트 -> 계획 -> 상품
-plan = [{"channel": "CP", "product": "경주", "qty": 12},
-        {"channel": "CP", "product": "없는투어", "qty": 3},
+plan = [{"channel": "TPC", "product": "경주", "qty": 12},
+        {"channel": "TPC", "product": "없는투어", "qty": 3},
         {"channel": "VI", "product": "경주", "qty": 5}]
 res = tpc_open.resolve(plan)
 if [i["product_id"] for i in res["items"]] != ["57025021"]:
     bad.append(f"계획 해석이 틀렸다: {res['items']}")
 if [u["tour"] for u in res["unmapped"]] != ["없는투어"]:
     bad.append("맵핑 없는 이름을 사유와 함께 남기지 않는다")
-print("     [CP] 줄만 골라서 상품번호로 — OK")
+print("     [TPC] 줄만 골라서 상품번호로 — OK")
 
 # 실패한 봇을 성공으로 덮지 않는가
 TPC_OPEN = (ROOT / "hub" / "core" / "opens" / "tpc_open.py").read_text(encoding="utf-8")
