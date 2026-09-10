@@ -1,6 +1,6 @@
 {
- "commit": "a044191",
- "at": "2026-09-10 10:40",
- "subject": "TPC: OK 가 낸 'Saved' 를 Submit 의 결과로 착각하던 것",
- "built": "2026-09-10 10:40"
+ "commit": "314f679",
+ "at": "2026-09-10 10:51",
+ "subject": "TPC: Submit 뒤 안내창을 Not now 로 닫는다",
+ "built": "2026-09-10 10:51"
 }

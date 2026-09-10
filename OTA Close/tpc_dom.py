@@ -984,18 +984,44 @@ def submit_page(page: CdpPage, log=lambda *_: None, timeout: float = 180.0) -> d
         raise CdpError(f"Submit 을 눌렀는데 {timeout:.0f}초 동안 아무 응답이 "
                        f"없었습니다 (안내도 창도 안 떴습니다)")
 
-    # ⚠️ Submit 뒤에 창이 하나 더 뜨는 경우 ('정말 제출할까요?' 같은).
-    #    여기서 아무 버튼이나 누르면 안 된다 — primary 를 누르면 확정이고
-    #    default 를 누르면 취소인데, 무엇이 뜬 건지 모르는 채로 고르면
-    #    제출이 안 된 것을 '했다' 고 보고하게 된다.
-    #    그래서 창이 남아 있으면 실패로 올리고 그 내용을 그대로 남긴다.
-    #    (실제 운영에서 어떤 창이 뜨는지 확인한 뒤 여기에 처리를 추가한다)
-    left = page.js(r"""(() => __tpc.visibleModals()
-        .filter(w => !__tpc.isOurModal(w))
-        .map(w => w.innerText.split('\n').join(' | ').slice(0, 300)))()""") or []
+    # Submit 뒤에 안내 팝업이 뜬다. 2026-09-10 에 사람이 직접 눌러 확인한 것:
+    #
+    #     "The product info has been updated. Please update your human
+    #      translations promptly to avoid potential impact on sales."
+    #                                          [Not now]  [Manage]
+    #
+    #   이 창이 뜬다는 것 자체가 **Submit 이 먹혔다는 뜻**이다.
+    #   Not now 로 닫으면 그대로 마감 상태가 된다 (직접 눌러 확인함).
+    #
+    # ⚠️ 반드시 default(비-primary) 를 누른다. primary 는 'Manage / 去维护' 라서
+    #    누르면 번역 관리 화면으로 끌려간다. dismiss_notices() 가 그렇게 한다.
+    #    글자로 고르지 않는다 — 화면이 중국어로 바뀌면 못 찾는다.
+    #
+    # ⚠️ 예전에는 창이 남아 있으면 무조건 실패로 올렸다. 무엇이 뜨는지 몰랐기
+    #    때문인데, 그 바람에 Submit 이 된 것을 실패로 보고했다.
+    #    이제는 닫아 보고, **닫은 뒤 새로고침해서 서버 값으로 검증**한다.
+    #    잘못 눌렀다면 그 검증이 잡는다 (거짓 성공이 되지 않는다).
+    def _left() -> list:
+        return page.js(r"""(() => __tpc.visibleModals()
+            .filter(w => !__tpc.isOurModal(w))
+            .map(w => w.innerText.split('\n').join(' | ').slice(0, 300)))()""") or []
+
+    for _ in range(4):
+        left = _left()
+        if not left:
+            break
+        for t in left:
+            if t not in seen["modals"]:
+                seen["modals"].append(t)
+            log(f"[안내창] {t[:160]}")
+        if not dismiss_notices(page):
+            break              # 푸터가 없어 어느 버튼이 '나중에' 인지 알 수 없다
+        time.sleep(1.2)
+
+    left = _left()
     if left:
-        raise CdpError("Submit 뒤에 확인 창이 남아 있습니다. 무엇을 눌러야 하는지 "
-                       "정해지지 않아 중단합니다: " + " // ".join(left)[:400])
+        raise CdpError("Submit 뒤에 닫지 못한 창이 남아 있습니다: "
+                       + " // ".join(left)[:400])
     return seen
 
 
