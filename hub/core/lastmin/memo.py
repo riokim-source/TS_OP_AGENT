@@ -246,16 +246,40 @@ def klook_variant_name(base: str, lang: str) -> str:
     return f"{base}({suffix})" if suffix else base
 
 
-def tpc_korean_ok(r: RowInput) -> bool:
+def tpc_language_of(area: str) -> str | None:
     """
-    그날 이 투어를 한국어로 받을 수 있는가.
+    TPC 가 그 지역에서 여는 패키지의 언어. 정해진 것이 없으면 None.
 
-    언어를 제한하지 않았으면 한국어도 되는 날이다. 일부만 골랐으면 그 안에
-    한국어가 있어야 한다. Klook 이 언어별 상품을 고르는 것과 같은 근거를 쓴다.
+        한국 상품 -> 중국어   Trip.com 에서 파는 것은 중국어 가이드 패키지다
+        일본 상품 -> 한국어   한국어 가이드 패키지를 연다
     """
+    if area in C.SPECIAL_CP_MRT:
+        return "korean"
+    if area in C.KOREA_AREAS:
+        return "chinese"
+    return None
+
+
+def tpc_lang_ok(r: RowInput) -> bool:
+    """
+    그날 TPC 가 열 패키지의 언어를 받을 수 있는가.
+
+    ⚠️ 언어를 제한한 날은 그 제한이 곧 'TPC 를 열 수 있는가' 가 된다.
+       TPC 는 지역마다 여는 패키지가 하나로 정해져 있기 때문이다.
+           한국 상품에 '중국어 불가'  -> 열 것이 없다
+           일본 상품에 '한국어 불가'  -> 열 것이 없다
+           '영어만' 이면 둘 다 해당된다
+       수량이 임계값을 넘어도 OP 텍스트에서 뺀다. 적어 두면 사람이 열 수 없는
+       것을 찾아 헤매게 된다.
+
+    제한을 안 걸었으면 그 언어도 되는 날이다.
+    """
+    lang = tpc_language_of(r.area)
+    if lang is None:
+        return True                       # 그 밖의 지역은 언어 조건이 없다
     if not r.language_restricted():
         return True
-    return "korean" in r.selected_languages()
+    return lang in r.selected_languages()
 
 
 def tpc_memo_name(base: str, r: RowInput, is_op: bool) -> str:
@@ -264,19 +288,15 @@ def tpc_memo_name(base: str, r: RowInput, is_op: bool) -> str:
 
     Office 는 상품명만 쓴다 — 기존 메모 형식을 한 글자도 바꾸지 않기 위해서다.
 
-    OP 는 **어느 패키지를 여는지**가 중요해서 언어를 이름에 붙인다.
-    Klook 과 같은 표기다.
-        한국 상품 -> (중)   Trip.com 에서 파는 것은 중국어 가이드 패키지다
-        일본 상품 -> (한)   한국어 가이드 패키지를 연다
-    그 밖의 지역은 어느 패키지인지 정해진 것이 없어 상품명만 쓴다.
+    OP 는 **어느 패키지를 여는지**가 중요해서 언어를 이름에 붙인다 (Klook 과 같은 표기).
+    지역별 언어가 정해지지 않은 곳은 상품명만 쓴다.
     """
     if not is_op:
         return base
-    if r.area in C.SPECIAL_CP_MRT:
-        return f"{base}({C.LANG_SUFFIX['korean']})"
-    if r.area in C.KOREA_AREAS:
-        return f"{base}({C.LANG_SUFFIX['chinese']})"
-    return base
+    lang = tpc_language_of(r.area)
+    if not lang:
+        return base
+    return f"{base}({C.LANG_SUFFIX[lang]})"
 
 
 def klook_memo_names(base: str, r: RowInput) -> list[str]:
@@ -431,9 +451,11 @@ def build_panel_memo(rows: list[RowInput], is_latest: bool, is_op: bool) -> dict
                             # 붙이면 같은 투어가 두 번 적힌 것처럼 보여서 읽기만 나빠진다.
                             auto[ch].append(_fmt(nm, q, kn))
                     elif ch == "TPC":
-                        # ⚠️ OP 의 일본 상품은 한국어 가이드 패키지를 연다.
-                        #    그날 한국어를 못 받으면 열 것이 없으므로 적지 않는다.
-                        if is_op and r.area in C.SPECIAL_CP_MRT and not tpc_korean_ok(r):
+                        # ⚠️ TPC 는 지역마다 여는 패키지의 언어가 하나로 정해져 있다.
+                        #    (한국=중국어 / 일본=한국어)
+                        #    그날 그 언어를 못 받으면 수량이 넘어도 열 것이 없다.
+                        #    '중국어 불가' / '한국어 불가' / '영어만' 이 그런 날이다.
+                        if is_op and not tpc_lang_ok(r):
                             continue
                         # 언어는 이름에 들어가므로 '(중국어 불가)' 를 또 붙이지 않는다.
                         auto[ch].append(_fmt(tpc_memo_name(base, r, is_op),

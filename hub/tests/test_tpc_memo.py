@@ -19,10 +19,15 @@
   4) tpc_targets.py 에 없는 상품은 Office/OP 둘 다 건너뛴다.
 
   5) 언어 표기는 OP 에만 붙인다 (Office 메모 형식은 한 글자도 안 바꾼다).
-       한국 상품 -> (중)
-       일본 상품 -> (한), 그날 한국어를 받을 수 있을 때만 적는다
+       한국 상품 -> (중)   Trip.com 에서 파는 것은 중국어 가이드 패키지다
+       일본 상품 -> (한)   한국어 가이드 패키지를 연다
 
-  6) 메모의 (한)/(중) 은 사람에게 알려주는 표시다. 봇에게 가는 계획에는
+  6) OP 에서 그 언어가 빠진 날은 **수량이 넘어도 생략한다.**
+       한국 상품에 '중국어 불가' / 일본 상품에 '한국어 불가' / '영어만'
+     열 것이 없는데 적어 두면 사람이 찾아 헤매게 된다.
+     Office 는 언어를 안 보므로 그대로 적는다.
+
+  7) 메모의 (한)/(중) 은 사람에게 알려주는 표시다. 봇에게 가는 계획에는
      표시 없는 이름이 간다 (tpc_targets 가 정확히 같은 이름만 받는다).
 
     python hub/tests/test_tpc_memo.py
@@ -120,28 +125,40 @@ for label, rows, is_op, want in (
     if got != want:
         bad.append(f"{label}: '{got}' (기대 '{want}')")
 
-# ── 5) OP 일본은 한국어가 되는 날만 ─────────────────────────────────────
+# ── 5) 언어가 빠지면 수량이 넘어도 뺀다 ────────────────────────────────
 print()
-print("  [5] OP 일본 — 한국어를 못 받는 날은 안 적는다")
+print("  [5] OP — 그 지역이 여는 언어가 빠지면 생략")
+print("     (한국=중국어 / 일본=한국어. 수량은 셋 다 임계값을 넘는다)")
 LANGS = ["english", "korean", "chinese", "japanese"]
-for label, sel, want in (
-        ("제한 없음", [], "Mt. Fuji Highlight(한) 15"),
-        ("한국어 포함", ["korean", "english"], "Mt. Fuji Highlight(한) 15"),
-        ("한국어 빠짐", ["english", "chinese"], "")):
-    r = RowInput(area="Tokyo", product="Mt. Fuji Highlight", qty=30,
+CASES5 = [
+    # 지역,     상품,                 고른 언어,                  기대
+    ("Busan", "경주", 25, [], "경주(중) 12"),
+    ("Busan", "경주", 25, ["chinese", "english"], "경주(중) 12"),
+    ("Busan", "경주", 25, ["korean", "english"], ""),          # 중국어 불가
+    ("Busan", "경주", 25, ["english"], ""),                    # 영어만
+    ("Tokyo", "Mt. Fuji Highlight", 30, [], "Mt. Fuji Highlight(한) 15"),
+    ("Tokyo", "Mt. Fuji Highlight", 30, ["korean", "chinese"],
+     "Mt. Fuji Highlight(한) 15"),
+    ("Tokyo", "Mt. Fuji Highlight", 30, ["chinese", "english"], ""),   # 한국어 불가
+    ("Tokyo", "Mt. Fuji Highlight", 30, ["english"], ""),              # 영어만
+]
+for area, name, q, sel, want in CASES5:
+    r = RowInput(area=area, product=name, qty=q,
                  languages_all=LANGS if sel else [], languages_sel=sel)
     got = memo_line([r], True, "TPC")
     mark = "" if got == want else f"   !! 기대 '{want}'"
-    print(f"     {label:12} -> [TPC]: '{got}'{mark}")
+    label = ", ".join(sel) if sel else "(제한 없음)"
+    print(f"     {area:6} {label:24} -> '{got}'{mark}")
     if got != want:
-        bad.append(f"OP 일본 {label}: '{got}' (기대 '{want}')")
-# 한국 상품은 언어 제한과 무관하다
+        bad.append(f"{area} {label}: '{got}' (기대 '{want}')")
+
+# 빠지는 날이라도 Office 는 그대로 적는다 (Office 는 언어를 안 본다)
 r = RowInput(area="Busan", product="경주", qty=25,
-             languages_all=LANGS, languages_sel=["english", "chinese"])
-got = memo_line([r], True, "TPC")
-print(f"     한국 상품(한국어 빠짐) -> [TPC]: '{got}'")
-if got != "경주(중) 12":
-    bad.append(f"한국 상품이 언어 제한에 걸렸다: '{got}'")
+             languages_all=LANGS, languages_sel=["english"])
+off = memo_line([r], False, "TPC")
+print(f"     Office (영어만)                     -> '{off}'")
+if off != "경주 12":
+    bad.append(f"Office 가 언어 제한에 걸렸다: '{off}'")
 
 # ── 6) 계획에는 표시 없는 이름이 간다 ───────────────────────────────────
 print()
