@@ -115,6 +115,36 @@ def _tpc_targets():
     return _TPC_CACHE
 
 
+_VI_CACHE: dict | None = None
+
+
+def _vi_targets():
+    """OTA Close/vi_targets.py 를 읽는다. 목록의 주인은 그 파일 하나다."""
+    global _VI_CACHE
+    if _VI_CACHE is not None:
+        return _VI_CACHE
+    _VI_CACHE = {"ok": False, "find": None}
+    try:
+        from ..paths import ota_close_dir, ensure_on_syspath
+        if ensure_on_syspath(ota_close_dir()):
+            import vi_targets as vt      # type: ignore
+            _VI_CACHE = {"ok": True, "find": vt.code_for_tour}
+    except Exception:
+        pass
+    return _VI_CACHE
+
+
+def in_vi_list(product: str) -> bool:
+    """
+    그 상품이 Viator 지정 목록에 있는가.
+
+    ⚠️ 목록을 못 읽으면 False 다 — 즉 [VI] 줄이 비게 된다. '모르면 다 적는다' 로
+       두면 봇이 열 수 없는 상품이 메모에 올라간다. 비는 쪽이 눈에 띄어서 낫다.
+    """
+    v = _vi_targets()
+    return bool(v["ok"] and v["find"](product) is not None)
+
+
 def in_tpc_list(product: str) -> bool:
     """그 상품이 TPC 지정 목록에 있는가 (이름이 정확히 같을 때만)."""
     t = _tpc_targets()
@@ -155,7 +185,14 @@ def distribute(area: str, product: str, qty: int, is_op: bool) -> dict[str, list
         threshold = C.THRESHOLD_OP if is_op else C.THRESHOLD_OFFICE
         out = distribute_general(product, q, threshold)
 
-    # TPC 는 지역 규칙을 타지 않는다. 지정 목록에 있으면 GG 와 같은 몫을 준다.
+    # ⚠️ VI 는 지정 목록(vi_targets.py)에 있는 상품만 적는다. Office/OP 둘 다.
+    #    규칙(언제 VI 에 이름을 올리는가)은 그대로이고, 목록에 없으면 뺄 뿐이다.
+    #    Viator 는 2026-09 부터 그 목록의 상품만 여닫는다 — 목록 밖 상품을 적어
+    #    두면 봇도 사람도 열 곳이 없다.
+    if out["VI"] and not in_vi_list(product):
+        out["VI"] = []
+
+    # TPC 는 지역 규칙을 타지 않는다. 지정 목록에 있을 때만 적는다.
     n = tpc_share(product, q, is_op)
     if n > 0:
         out["TPC"].append(f"{product} {n}")

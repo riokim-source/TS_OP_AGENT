@@ -18,24 +18,36 @@ Viator 에서 매일 다루는 상품 목록. **이 파일 하나가 주인이�
 from __future__ import annotations
 
 # 번호 -> (지역, 그 번호에 묶인 투어들)
+#
+# ⚠️ 투어 이름은 **예약 파일의 Product 이름과 정확히 같아야** 한다.
+#    비슷한 이름은 맞춰 주지 않는다(엉뚱한 상품이 열린다). 그래서 한 글자만
+#    달라도 그 상품은 메모에서도 오픈에서도 조용히 빠진다.
+#    2026-09-15 에 실제 예약 파일·운영 맵핑표와 대조해서 고친 것:
+#        '선셋캡슐'              -> 실제는 '선셋캡슐 East'
+#        'Blue Mountains Zig Zag' -> 실제는 'Blue Mountain Zig Zag'
+#        'Biei Highlights'        -> 실제는 'Biei Highlight'
+#        '감천미포 Sightseeing'   -> 맵핑표에는 '감천미포 관광'
+#    사람이 부르던 이름은 뒤에 같이 남겨 둔다 (맞으면 쓰고, 안 맞아도 해가 없다).
 VI_TARGETS: dict[str, tuple[str, tuple[str, ...]]] = {
     # ── 한국 ────────────────────────────────────────────────────────────
     "48881P43":  ("KOREA", ("경주", "경주Express")),
-    "48881P170": ("KOREA", ("감천미포", "감천미포 Sightseeing", "감천미포 Early Bird")),
+    "48881P170": ("KOREA", ("감천미포", "감천미포 관광", "감천미포 Sightseeing",
+                            "감천미포 Early Bird")),
     "48881P2":   ("KOREA", ("청해자감", "아해자감")),
-    "48881P202": ("KOREA", ("선셋캡슐",)),
+    "48881P202": ("KOREA", ("선셋캡슐 East", "선셋캡슐")),
     "48881P11":  ("KOREA", ("레남아",)),
     "48881P13":  ("KOREA", ("설낙",)),
     "48881P93":  ("KOREA", ("포천",)),
     # ── 일본 ────────────────────────────────────────────────────────────
-    "48881P233": ("JAPAN", ("Biei Highlights", "Biei Signature", "Biei Furano")),
+    "48881P233": ("JAPAN", ("Biei Highlight", "Biei Highlights", "Biei Signature",
+                            "Biei Furano")),
     "48881P183": ("JAPAN", ("Mt. Fuji Highlight", "Mt. Fuji Signature")),
     "48881P238": ("JAPAN", ("Kamakura Highlight", "Kamakura Yokohama")),
     "48881P211": ("JAPAN", ("Yufuin Brewery", "Yufuin Dazaifu")),
     "48881P206": ("JAPAN", ("Kyoto Nara", "Arashiyama & Nishiki")),
     "48881P237": ("JAPAN", ("Shirakawago Regular",)),
     # ── 호주 ────────────────────────────────────────────────────────────
-    "48881P232": ("AUSTRALIA", ("Blue Mountains Zig Zag",)),
+    "48881P232": ("AUSTRALIA", ("Blue Mountain Zig Zag", "Blue Mountains Zig Zag")),
 }
 
 

@@ -38,7 +38,7 @@ WANT_OFFICE = """[투어일자 08/22]
 Last Min 오픈:
 [KLOOK]: BIGBANG 셔틀 7, 남아 1, 남이섬셔틀 3, 다크-남영동 5, 수원화성 1, 경주 13, 경주 Express 1, 교촌경주 13, 선셋캡슐 East 3, 자갈치야경 5, Kamakura Yokohama 6, Mt. Fuji Signature 8, Amanohashidate 5, Fukuoka Foodie 3, Yufuin Dazaifu 3, Biei Furano 1, Toyako Niseko 12, Blue Mountain Zig Zag 5
 [KK]: 경주
-[VI]: 경주, Toyako Niseko
+[VI]: 경주
 [GG]: 경주 12, Toyako Niseko 12
 [TPC]: 경주 25, 선셋캡슐 East 3, Yufuin Dazaifu 3, Biei Furano 1
 [CP]: Toyako Niseko 12
@@ -58,7 +58,7 @@ WANT_OP = """[투어일자 08/22]
 Last Min 오픈:
 [KLOOK]: BIGBANG 셔틀 7, 남아 1, 남이섬셔틀 3, 다크-남영동 5, 수원화성 1, 경주 13, 경주 Express 1, 교촌경주 13, 선셋캡슐 East 3, 자갈치야경 5, Kamakura Yokohama 6, Mt. Fuji Signature 8, Amanohashidate 5, Fukuoka Foodie 3, Yufuin Dazaifu 3, Biei Furano 1, Toyako Niseko 12, Blue Mountain Zig Zag 5
 [KK]: 경주
-[VI]: 경주, Toyako Niseko
+[VI]: 경주
 [GG]: 경주 12, Toyako Niseko 12
 [TPC]: 경주(중) 12
 [CP]: Toyako Niseko 12

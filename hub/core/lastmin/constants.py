@@ -19,18 +19,23 @@ CHANNELS: list[str] = ["KLOOK", "KK", "VI", "GG", "TPC", "CP", "MRT"]
 
 # 채널 -> 예약 파일 Agency 컬럼 코드
 #
-# ⚠️ [CP] 는 Trip.com/Ctrip 인데 예약 파일에서는 'TPC' 로 들어온다.
-#    예전에는 'CP' 를 읽어서 Trip.com 예약을 거의 다 놓쳤다
-#    (2026-08-21~22 파일 기준 TPC 62건 vs CP 2건).
-#    메모에 찍히는 채널 이름은 [CP] 그대로 두고, 읽는 코드만 TPC 로 맞춘다.
+# ⚠️ 'TPC' 코드는 [TPC] 로, 'CP' 코드는 [CP] 로 간다. 둘은 다른 채널이다.
+#
+#    예전에는 CP 가 Trip.com 인 줄 알고 'TPC' 코드를 [CP] 로 모았다
+#    (CHANNEL_MAP["CP"] = "TPC", 보조 코드 ["TPC", "CP"]).
+#    2026-09-10 에 TPC 를 별도 채널로 갈라 냈는데 이 매핑이 그대로 남아서,
+#    Trip.com 으로 들어온 예약이 전날 패널의 [CP] 줄에 찍혔다.
+#        2026-09-15 파일: 감천미포 TPC 1명 (09-15 02:30) -> '[CP]: 감천미포 1'
+#        그날 CP 로 들어온 감천미포 예약은 한 건도 없었다.
+#    (파일 전체에서도 CP 코드는 1건, TPC 코드는 46건이었다)
 CHANNEL_MAP: dict[str, str] = {
-    "KLOOK": "L", "KK": "KK", "VI": "VI", "GG": "GG", "CP": "TPC", "MRT": "MRT",
+    "KLOOK": "L", "KK": "KK", "VI": "VI", "GG": "GG",
+    "TPC": "TPC", "CP": "CP", "MRT": "MRT",
 }
 
 # 같은 채널로 취급할 보조 코드 (파일에 두 표기가 섞여 들어오는 경우)
-CHANNEL_ALIASES: dict[str, list[str]] = {
-    "CP": ["TPC", "CP"],
-}
+# ⚠️ TPC 와 CP 를 여기서 섞으면 안 된다 (위 사고).
+CHANNEL_ALIASES: dict[str, list[str]] = {}
 
 # Area 는 예약 파일의 Area 값. 화면에서는 Region 으로 묶어서 보여준다.
 REGION_GROUPS: list[tuple[str, list[str]]] = [
