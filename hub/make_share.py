@@ -203,7 +203,10 @@ def code_version() -> dict:
     """
     def git(*args) -> str:
         try:
+            # ⚠️ encoding 을 준다. 기본값(한국 Windows 는 cp949)으로 읽으면
+            #    한글 커밋 제목에서 터져 stdout 을 통째로 버리고 '?' 가 새겨진다.
             return subprocess.run(["git", *args], cwd=str(ROOT), text=True,
+                                  encoding="utf-8", errors="replace",
                                   capture_output=True, timeout=10).stdout.strip()
         except Exception:
             return ""

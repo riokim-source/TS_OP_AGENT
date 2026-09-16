@@ -42,8 +42,11 @@ TPC (Trip.com / Ctrip vBooking) 마감 · 수집 · 오픈 봇.
 
 ⚠️ Select All 이 '화면의 모든 패키지' 는 아니다
     이름에 Invalid 가 붙은 패키지는 On/off 창 목록에 아예 안 나온다.
-    닫아야 할 패키지가 창에 없으면 OK 를 누르지 않고 PKG_UNSELECTABLE 로 멈춘다.
     (2026-09-09 감천미포: 화면 11개 / 창 10개, 빠진 하나가 그날 유일하게 열린 것이었다)
+    닫을 수 있는 것은 닫고, 못 닫은 것은 PARTIAL 로 실패에 남긴다. 닫을 수 있는
+    것이 하나도 없을 때만 OK 를 누르지 않고 PKG_UNSELECTABLE 로 멈춘다.
+    그 패키지는 달력 스위치로도 못 닫는다 — 2026-09-16 에 직접 확인했다
+    (_cannot_detail 참고). 사람이 Trip.com 에서 Invalid 를 풀어야 한다.
 
 ⚠️ 서버를 두드리지 않는다
     상품을 하나씩 순서대로 처리한다. 워커를 나눠 동시에 붙이지 않고, 사이에
@@ -103,6 +106,7 @@ class Status(str, Enum):
     NO_CLOSE_LOG = "NO_CLOSE_LOG"       # 오픈: 그날 무엇을 닫았는지 기록이 없다
     DIALOG_FAILED = "DIALOG_FAILED"     # On/off 창을 못 다룸
     PKG_UNSELECTABLE = "PKG_UNSELECTABLE"   # 닫아야 할 패키지가 창 목록에 없음
+    PARTIAL = "PARTIAL"                 # 닫을 수 있는 건 닫았고, 못 닫는 것이 남았다
     DATE_FAILED = "DATE_FAILED"         # 날짜를 정확히 하나로 못 고름
     SUBMIT_FAILED = "SUBMIT_FAILED"     # Submit 실패
     VERIFY_FAILED = "VERIFY_FAILED"     # Submit 했는데 상태가 안 바뀜
@@ -193,6 +197,28 @@ def _scan_packages(edit, target_date: str) -> tuple[dict, list]:
     return state, pkgs
 
 
+def _cannot_detail(names: list[str]) -> str:
+    """
+    On/off 창 목록에 없는 패키지를 사람에게 설명한다.
+
+    ⚠️ 이건 봇이 못 하는 게 아니라 **화면에서 아무도 못 한다.** 2026-09-16 에
+       감천미포 H-日文导游(早班) 로 실제 확인한 것:
+         - On/off 창의 패키지 목록에 그 패키지만 없다 (11개 중 10개만 나온다)
+         - 달력 칸의 판매 스위치를 눌러도 6초 뒤 켜진 채로 돌아온다.
+           그때 나가는 submitProductDraft 의 packagePriceAndStockList 가 빈 배열이다
+           (서버는 Success 라고 답하지만 바뀌는 것이 없다). 안내 문구도 안 뜬다.
+       둘 다 그 패키지에 'Invalid' 표시가 붙어 있기 때문이다. 정상 패키지(G)로
+       같은 자리를 눌러 보면 5~6초 뒤 제대로 꺼진다 — 봇의 클릭 문제가 아니다.
+
+    그래서 사람이 할 일은 '손으로 닫기' 가 아니라 Trip.com 에서 그 패키지의
+    Invalid 를 푸는 것(Edit package)이거나, 안 쓰는 패키지면 지우는 것이다.
+    """
+    return (", ".join(names)
+            + " — 'Invalid' 표시가 붙은 패키지라 On/off 창에도 안 나오고 "
+              "달력 스위치도 눌러지지 않습니다(눌러도 되돌아옵니다). "
+              "손으로도 못 닫으니 Trip.com 에서 그 패키지를 고치거나 지워야 합니다")
+
+
 def _summarize(state: dict) -> dict:
     out = {"on": [], "off": [], "not_set": [], "no_switch": []}
     for name, s in state.items():
@@ -224,7 +250,10 @@ def closed_by_us(target_date: str) -> dict[str, list[str]]:
             continue
         for row in rows:
             pid = str(row.get("product_id") or "")
-            if not pid or row.get("status") != Status.SUCCESS.value:
+            # ⚠️ PARTIAL 도 읽는다. 일부만 닫힌 날에도 '우리가 닫은 것' 은 있고,
+            #    저녁에 그걸 안 열면 그 자리는 하루 더 닫힌 채로 남는다.
+            if not pid or row.get("status") not in (Status.SUCCESS.value,
+                                                    Status.PARTIAL.value):
                 continue
             out.setdefault(pid, [])
             for name in row.get("changed") or []:
@@ -283,6 +312,9 @@ def process_product(port: int, target: dict, target_date: str, mode: str,
             r.status = Status.NO_PACKAGES
             r.detail = str(e)
             return r
+
+        # 창 목록에 없어 손댈 수 없는 패키지 (마감에서만 생긴다)
+        cannot: list[str] = []
 
         # ── 지금 상태 ─────────────────────────────────────────────────────
         state, pkgs = _scan_packages(edit, target_date)
@@ -346,19 +378,23 @@ def process_product(port: int, target: dict, target_date: str, mode: str,
                 picked_pkgs = D.dialog_select_all_packages(edit, log)
                 # ⚠️ Select All 이 '화면의 모든 패키지' 는 아니다.
                 #    2026-09-09 감천미포: 화면에는 패키지가 11개인데 창 목록에는
-                #    10개뿐이었다. 빠진 H-日文导游(早班) 는 이름에 'Invalid' 가
-                #    붙어 있었고, 하필 그게 그날 유일하게 열려 있던 패키지였다.
-                #    그대로 OK/Submit 하면 이미 닫힌 10개를 다시 닫고
-                #    '마감했다' 는 모양만 남는다. 눌러 보기 전에 멈춘다.
+                #    10개뿐이었다. 빠진 H-日文导游(早班) 에는 'Invalid' 표시가
+                #    붙어 있었다. 그대로 OK/Submit 하면 그 패키지는 열린 채인데
+                #    '마감했다' 는 모양만 남는다. 무엇이 빠졌는지 먼저 센다.
                 cannot = [n for n in need if n not in picked_pkgs]
-                if cannot:
+                if cannot and not [n for n in need if n not in cannot]:
+                    # 닫을 수 있는 것이 하나도 없다. 창을 닫고 멈춘다.
                     D.cancel_dialogs(edit)
                     r.status = Status.PKG_UNSELECTABLE
-                    r.detail = ("On/off 창 목록에 없어서 닫을 수 없는 패키지: "
-                                + ", ".join(cannot)
-                                + " — 상품 화면에서 그 패키지 상태를 확인하세요 "
-                                  "(Invalid 표시가 붙어 있으면 창에 안 나옵니다)")
+                    r.detail = _cannot_detail(cannot)
                     return r
+                if cannot:
+                    # ⚠️ 예전에는 여기서 통째로 멈췄다. 그러면 못 닫는 패키지 하나
+                    #    때문에 닫을 수 있는 나머지까지 열린 채로 남는다
+                    #    (2026-09-15 / 09-16 감천미포: H 하나 때문에 11개 전부 안 닫힘).
+                    #    닫을 수 있는 것은 닫고, 못 닫는 것은 끝에 실패로 남긴다.
+                    log(f"창 목록에 없어 손댈 수 없는 패키지 {len(cannot)}개: "
+                        f"{', '.join(cannot)} — 나머지만 닫습니다")
             else:
                 # 오픈은 전체 선택을 쓰지 않는다. 원래 팔던 것만 다시 연다 —
                 # Not set 인 패키지까지 열면 그날 운영하지 않는 자리가 팔린다.
@@ -384,9 +420,11 @@ def process_product(port: int, target: dict, target_date: str, mode: str,
         if dry_run:
             D.cancel_dialogs(edit)
             r.status = Status.DRY_RUN
-            r.changed = need
-            r.detail = (f"대상 {len(need)}개 — 창까지 확인하고 Cancel 했습니다 "
-                        f"(OK/Submit 안 함)")
+            r.changed = [n for n in need if n not in cannot]
+            r.detail = (f"대상 {len(r.changed)}개 — 창까지 확인하고 Cancel 했습니다 "
+                        f"(OK/Submit 안 함)"
+                        + (f" / 못 닫는 패키지 {len(cannot)}개: "
+                           + _cannot_detail(cannot) if cannot else ""))
             return r
 
         D.dialog_ok(edit, log)
@@ -407,6 +445,13 @@ def process_product(port: int, target: dict, target_date: str, mode: str,
         want = "off" if closing else "on"
         bad = [n for n in need
                if (after.get(n) or {}).get("verdict") != want]
+        if bad and set(bad) == set(cannot):
+            # 창에 없어서 손도 못 댄 것만 남았다. 나머지는 실제로 바뀌었다.
+            r.changed = [n for n in need if n not in bad]
+            r.status = Status.PARTIAL
+            r.detail = (f"{len(r.changed)}개 마감 확인 / 못 닫은 패키지 "
+                        f"{len(bad)}개 — " + _cannot_detail(bad))
+            return r
         if bad:
             r.status = Status.VERIFY_FAILED
             r.detail = (f"Submit 뒤에도 안 바뀐 패키지 {len(bad)}개: "

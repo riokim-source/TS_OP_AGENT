@@ -94,9 +94,14 @@ def code_version() -> dict:
             pass
     try:
         import subprocess
+        # ⚠️ encoding 을 반드시 준다. 안 주면 파이썬이 이 PC 의 기본 코드페이지
+        #    (한국 Windows 는 cp949) 로 읽으려다, 커밋 제목의 한글 UTF-8 바이트에서
+        #    UnicodeDecodeError 를 내고 stdout 을 통째로 버린다. 그러면 예외가
+        #    조용히 잡혀서 버전이 '?' 로 찍힌다 — 어느 코드로 돌았는지 못 가리게 된다.
         out = subprocess.run(
             ["git", "log", "-1", "--format=%h|%cd|%s", "--date=format:%Y-%m-%d %H:%M"],
-            cwd=str(SYSTEM_DIR), text=True, capture_output=True, timeout=10).stdout.strip()
+            cwd=str(SYSTEM_DIR), text=True, encoding="utf-8", errors="replace",
+            capture_output=True, timeout=10).stdout.strip()
         if out and "|" in out:
             h, at, sub = (out.split("|", 2) + ["", ""])[:3]
             return {"commit": h, "at": at, "subject": sub[:70], "built": "(개발 폴더)"}
