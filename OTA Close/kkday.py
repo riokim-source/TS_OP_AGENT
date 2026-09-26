@@ -593,6 +593,27 @@ def filter_by_target_codes(packages: List[PackagePage], target_codes: Set[str]) 
 # ============================================================
 # 2) 단일 패키지 마감 (v3: 단계별 사유 분류 + post-close 검증)
 # ============================================================
+def closed_now(page: Page) -> bool:
+    """
+    지금 화면을 다시 검색해서 '열린 행이 0' 인지 본다.
+
+    ⚠️ 눌렀는지가 아니라 **화면 상태로 판정한다.** Confirm 창은 스스로 닫히기도
+       한다. 그때 '버튼 못 찾음' 으로 실패를 내면, 실제로는 닫혔는데 매일
+       실패가 뜬다 (2026-09-20 ~ 25: 8974 / 17654 / 18613 이 CONFIRM_FAILED
+       였는데 재시도에서는 늘 0행이었다).
+       빈 테이블을 0행으로 오독하지 않도록 search_confirmed_closed 도 같이 본다.
+    """
+    try:
+        page.get_by_role("button", name="Search").click(timeout=3000)
+        wait_search_results(page)
+    except Exception:
+        pass
+    try:
+        return count_open_rows(page) == 0 and search_confirmed_closed(page)
+    except Exception:
+        return False
+
+
 def close_one_package(
     page: Page,
     pkg: PackagePage,
@@ -1030,9 +1051,21 @@ def close_one_package(
                 # 첫 라운드부터 실패면 진짜 실패, 아니면 계속.
                 # 실패 시 실제로 보이는 버튼 텍스트를 detail 에 남겨 다음 run 에서 원인 특정.
                 if round_idx == 0:
+                    # 창이 안 보인다고 바로 실패로 두지 않는다. 다시 검색해서
+                    # 정말 열린 행이 남아 있는지 본다 (closed_now 설명 참고).
+                    if closed_now(page):
+                        total_closed += current_rows
+                        pr.status = PackageStatus.SUCCESS
+                        pr.detail = (f"{total_closed} 행 마감 완료 "
+                                     f"(Confirm 창은 없었지만 다시 검색해 0행 확인, "
+                                     f"rounds={rounds})")
+                        pr.rows_after = 0
+                        pr.elapsed_sec = time.perf_counter() - t0
+                        return pr
                     pr.status = PackageStatus.CONFIRM_FAILED
-                    pr.detail = f"Confirm 버튼 못 찾음 (selector+JS 실패) | {_confirm_diag}"
-                    pr.rows_after = current_rows
+                    pr.detail = (f"Confirm 버튼 못 찾음 + 다시 검색해도 열린 행이 남음 "
+                                 f"| {_confirm_diag}")
+                    pr.rows_after = count_open_rows(page)
                     pr.elapsed_sec = time.perf_counter() - t0
                     return pr
         except Exception as e:

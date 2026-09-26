@@ -37,24 +37,47 @@ class _Counter:
     def __init__(self, job):
         self.job = job
         self.n = 0
+        self.hint = ""          # 러너가 남긴 마지막 오류 한 줄
         self._orig = job.result
+        self._orig_log = job.log
         # 원래 인스턴스에 붙어 있던 것인지, 클래스의 메서드인지 기억해 둔다.
         # 끝나고 되돌릴 때 없던 것을 남겨 두지 않기 위해서다.
         self._was_own = "result" in vars(job)
+        self._log_was_own = "log" in vars(job)
 
     def __enter__(self):
         self.job.result = self._count
+        self.job.log = self._watch
         return self
 
     def _count(self, item):
         self.n += 1
         self._orig(item)
 
+    def _watch(self, *a, **k):
+        # ⚠️ 러너가 봇의 화면 출력을 그대로 흘려보내는데, 정작 '왜 하나도 못
+        #    열었는지' 는 그 줄에만 있다. 그걸 안 집으면 결과에는
+        #    '결과가 하나도 없습니다 (로그를 확인하세요)' 만 남는다.
+        #    (2026-09-20 VI: 진짜 사유는 'Date picker input 을 찾지 못했습니다')
+        try:
+            line = str(a[-1]) if a else ""
+            if any(w in line for w in ("치명", "Errors:", "ERROR", "오류")):
+                t = line.strip().lstrip("- ").strip()
+                if t and "Errors:" not in t:
+                    self.hint = t[:200]
+        except Exception:
+            pass
+        self._orig_log(*a, **k)
+
     def __exit__(self, *exc):
         if self._was_own:
             self.job.result = self._orig
         else:
             vars(self.job).pop("result", None)
+        if self._log_was_own:
+            self.job.log = self._orig_log
+        else:
+            vars(self.job).pop("log", None)
         return False
 
 
@@ -118,7 +141,7 @@ def run_open(job, p: dict) -> None:
         if not why and made == 0:
             # 열 것이 있어서 러너를 돌렸는데 아무것도 안 나왔다.
             # 조용히 넘어가면 '했다' 로 보이므로 눈에 띄게 남긴다.
-            why = "결과가 하나도 없습니다 (로그를 확인하세요)"
+            why = ("결과가 하나도 없습니다 — " + cnt.hint) if cnt.hint else                   "결과가 하나도 없습니다 (로그를 확인하세요)"
 
         if why:
             failed.append((name, why))

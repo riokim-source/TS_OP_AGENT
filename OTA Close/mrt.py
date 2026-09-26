@@ -2137,10 +2137,19 @@ def set_target_date_inventory(page: Page, total: int = 0, split: bool = False,
         want = str(targets[idx - 1])
         tag = cell.get("tag")
         cell_name = cell.get("name", "?")
-        cur_val = cell.get("value") or cell.get("placeholder") or "0"
+        raw = cell.get("value")
+        raw = "" if raw is None else str(raw)
         was_disabled = cell.get("disabled")
-        print(f"[진행] 셀 {idx}/{total_cells} ({cell_name}) value='{cur_val}' "
+        # ⚠️ 빈 칸('')과 0 은 다르다. 빈 칸은 '미입력' 이라 닫힌 게 아니다.
+        #    예전 로그는 둘 다 '0' 으로 찍혀서 구분이 안 됐다.
+        print(f"[진행] 셀 {idx}/{total_cells} ({cell_name}) value={raw!r} "
               f"disabled={was_disabled} → {want} 입력")
+        if raw == want:
+            # 이미 목표값이다. 굳이 쓰지 않는다 — 여기서 나던 타임아웃이
+            # 그대로 '부분 마감' 실패가 됐다 (끝의 검증이 다시 확인한다).
+            changed += 1
+            print(f"  [건너뜀] 셀 #{idx} 이미 {want}")
+            continue
 
         sel = f"input[name='{cell_name}']"  # data-bot-cell 은 React 재렌더로 지워짐 → 안정적인 name 으로 지정
         success = False
@@ -2224,11 +2233,7 @@ def set_target_date_inventory(page: Page, total: int = 0, split: bool = False,
         return f"input[name='{nm}']"
 
     def _cell_val(nm):
-        try:
-            return str(page.locator(_name_sel(nm)).first.evaluate(
-                "el => el.value", timeout=3000))
-        except Exception:
-            return None  # 못 읽으면 미확인 → 실패로 간주
+        return read_cell_values(page, [nm]).get(nm)
 
     want_of = {c.get("name"): str(targets[i]) for i, c in enumerate(cells)}
 
@@ -2255,12 +2260,14 @@ def set_target_date_inventory(page: Page, total: int = 0, split: bool = False,
         except Exception:
             return False
 
-    def _wrong(c):
-        nm = c.get("name")
-        return _cell_val(nm) != want_of.get(nm)
+    names = [c.get("name") for c in cells]
+
+    def _wrong_now():
+        vals = read_cell_values(page, names)
+        return [c for c in cells if vals.get(c.get("name")) != want_of.get(c.get("name"))]
 
     for verify_round in range(2):
-        remaining = [c for c in cells if _wrong(c)]
+        remaining = _wrong_now()
         if not remaining:
             break
         print(f"[검증] 목표값과 다른 셀 {len(remaining)}개 → 페이지 진정 후 재시도 "
@@ -2270,13 +2277,41 @@ def set_target_date_inventory(page: Page, total: int = 0, split: bool = False,
             _force_value(c.get("name"), want_of.get(c.get("name"), "0"))
             page.wait_for_timeout(120)
 
-    remaining_final = [c for c in cells if _wrong(c)]
+    remaining_final = _wrong_now()
     ok_cells = total_cells - len(remaining_final)
     if remaining_final:
         print(f"[완료] 인원 입력: {ok_cells}/{total_cells}개 (미완 {len(remaining_final)}개)")
     else:
         print(f"[완료] 인원 입력 완료: {ok_cells}/{total_cells}개 목표={targets}")
     return ok_cells, total_cells
+
+
+def read_cell_values(page, names: list) -> dict:
+    """
+    재고 셀 값을 **한 번에** 읽는다. {name: 값(문자열) 또는 None}
+
+    ⚠️ 셀마다 locator 로 왕복하면 어느 한 칸에서 3초씩 타임아웃이 난다. 그러면
+       '못 읽음' 이 되고, 그걸 '목표값과 다름' 으로 세어 부분 마감 실패가 된다.
+       실제로 매일 같은 두 상품이 이걸로 실패했다 (3890255 / 4843937,
+       2026-09-20~25 로그. 값은 이미 0 인데 읽기만 실패했다).
+       화면을 한 번만 물어보면 그 왕복이 아예 없다.
+
+    못 찾은 칸은 None 이다 — 그건 '모른다' 이지 '맞다' 가 아니다.
+    """
+    if not names:
+        return {}
+    try:
+        got = page.evaluate(
+            """(ns) => ns.map(n => {
+                 const el = document.querySelector('input[name="' + n + '"]');
+                 return el ? String(el.value) : null;
+               })""",
+            list(names))
+    except Exception:
+        return {n: None for n in names}
+    got = list(got or [])
+    return {n: (str(got[i]) if i < len(got) and got[i] is not None else None)
+            for i, n in enumerate(names)}
 
 
 def get_viewport_size(page: Page) -> Dict[str, int]:
