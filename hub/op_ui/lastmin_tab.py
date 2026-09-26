@@ -22,6 +22,7 @@ from core.lastmin import constants as C
 from core.lastmin import entries as lmentries
 from core.lastmin.memo import RowInput, build_open_plan, render_memo
 from core.lastmin.panels import build_panels
+from core.lastmin import quickfill
 from core.opens import IMPLEMENTED, NOT_IMPLEMENTED_REASON, summarize_plan
 
 LANG_LABEL = {"english": "영어", "korean": "한국어", "chinese": "중국어", "japanese": "일본어"}
@@ -67,8 +68,11 @@ def _load(raw: bytes, filename: str, pick_dates=None) -> bool:
     #    되살린 수량이 화면에 안 나오고 이전 값이 그대로 보인다.
     #    파일을 새로 읽을 때는 위젯 상태를 비워서 되살린 값으로 다시 그리게 한다.
     for wk in [w for w in list(st.session_state)
-               if str(w).startswith(("q-", "l-", "p-", "c-", "mv-"))]:
+               if str(w).startswith(("q-", "l-", "p-", "c-", "mv-", "qf-"))]:
         del st.session_state[wk]
+    # 빠른 입력 칸에 적어 둔 글도 파일과 함께 비운다 (다른 날 글이 남으면 헷갈린다)
+    st.session_state["lm_qf"] = {}
+    st.session_state["lm_qf_note"] = {}
     st.session_state["lm_restored"] = sum(
         1 for v in saved.values() if int((v or {}).get("qty") or 0) > 0)
     return True
@@ -273,9 +277,16 @@ def render(lock) -> None:
 
     latest = next((i for i, p in enumerate(panels) if p["is_latest"]), 0)
 
+    _quick_fill(latest, panels[latest])
+    st.divider()
+
     for pi, p in enumerate(panels):
         head = "Last Min 오픈" if p["is_latest"] else "Last Min 10시 후 예약"
-        with st.expander(f"[투어일자 {p['date_label']}] {head}", expanded=p["is_latest"]):
+        if p["is_latest"]:
+            head += " — 상품별 수량·언어·픽업 (펼쳐서 확인/수정)"
+        # ⚠️ 접어 둔다. 빠른 입력으로 채우고 필요할 때만 펼쳐 본다는 요청이다.
+        #    (2026-09-27) 펼친 상태가 기본이면 상품이 많은 날 화면이 끝없이 길어진다.
+        with st.expander(f"[투어일자 {p['date_label']}] {head}", expanded=False):
             if not p["is_latest"]:
                 st.caption("전날 10시 이후 들어온 예약을 자동 집계한 값입니다. 그대로 두면 됩니다.")
             for g in p["groups"]:
@@ -291,6 +302,82 @@ def render(lock) -> None:
     _memo_and_open(latest, lock)
 
 
+def _with_saved(cands: list, saved) -> list:
+    """후보 + 예전에 골라 둔 값. 후보에 없다고 버리면 화면이 죽는다 (_tour_row 설명)."""
+    out = list(cands)
+    for x in list(saved or []):
+        if x not in out:
+            out.append(x)
+    return out
+
+
+def _apply_quick(pi: int, rows: list, text: str) -> tuple[int, list[str]]:
+    """
+    빠른 입력 칸의 글을 그 지역 줄에 넣는다.
+
+    ⚠️ **그 칸이 그 지역의 전부다.** 적지 않은 상품은 0 으로 되돌린다.
+       안 그러면 칸을 고쳐 적어도 지운 상품의 예전 수량이 남아서 그대로 열린다.
+
+    ⚠️ 위젯 키(q-/l-/p-)까지 같이 바꿔야 화면에 보인다. 세션에 위젯 값이
+       남아 있으면 Streamlit 이 그쪽을 우선하기 때문이다 (_load 의 설명과 같다).
+    """
+    assign, problems = quickfill.resolve(quickfill.parse(text), rows)
+    ent = st.session_state.setdefault("lm_entries", {})
+    for row in rows:
+        k = _key(pi, row)
+        e = ent.setdefault(k, {})
+        got = assign.get(row["key"])
+        langs_all = list(row.get("languages") or [])
+        picks_all = list(row.get("pickups") or [])
+        qty = int(got["qty"]) if got else 0
+        lang = [x for x in (got["lang"] if got else langs_all) if x in langs_all] or langs_all
+        pick = [x for x in (got["pick"] if got else picks_all) if x in picks_all] or picks_all
+        if got and not got["pick"]:
+            pick = []          # '전부 빼라' 는 지시는 그대로 둔다
+        e["qty"], e["lang"], e["pick"] = qty, list(lang), list(pick)
+        e.setdefault("ch", dict(row.get("lastmin") or {}))
+        e.setdefault("move", {})
+        st.session_state[f"q-{k}"] = qty
+        if langs_all:
+            st.session_state[f"l-{k}"] = list(lang)
+        if picks_all:
+            st.session_state[f"p-{k}"] = list(pick)
+    return len(assign), problems
+
+
+def _quick_fill(pi: int, panel: dict) -> None:
+    """지역마다 빈칸 하나. 적은 글을 그대로 읽어 아래 수량·옵션을 채운다."""
+    st.markdown("**빠른 입력** — 지역 칸에 적으면 아래 수량·언어·픽업이 채워집니다.")
+    st.caption("예) `감천미포 4, 경주 4, 교촌경주 10` · `Mt. Fuji Signature 9(중국어불가)` · "
+               "`Amanohashidate 22 (한, 영)` · `Yufuin Brewery 10(영어한국어10 중국어0)` · "
+               "`알남아 9(홍대제외)` — 쉼표나 줄바꿈으로 여러 개. "
+               "**적지 않은 상품은 0 이 됩니다.**")
+    applied = st.session_state.setdefault("lm_qf", {})
+    notes = st.session_state.setdefault("lm_qf_note", {})
+
+    for g in panel["groups"]:
+        for a in g["areas"]:
+            area = a["area"]
+            c1, c2 = st.columns([1, 6])
+            c1.write(f"**{area}**")
+            c1.caption(f"{len(a['rows'])}개 상품")
+            text = c2.text_area(
+                area, key=f"qf-{pi}-{area}", height=68, label_visibility="collapsed",
+                placeholder=f"{area} 상품 수량 (예: 경주 4, 교촌경주 10)")
+            if area not in applied:
+                # 첫 그림에서는 손대지 않는다. 되살린 수량을 지워 버리면 안 된다.
+                applied[area] = text
+            elif text != applied[area]:
+                applied[area] = text
+                n, probs = _apply_quick(pi, a["rows"], text)
+                notes[area] = {"n": n, "probs": probs}
+            note = notes.get(area) or {}
+            if note.get("n"):
+                c2.caption(f"{note['n']}개 상품에 넣었습니다")
+            for msg in note.get("probs") or []:
+                c2.warning(msg, icon="⚠️")
+
+
 def _tour_row(pi: int, row: dict, is_latest: bool) -> None:
     e = _entry(pi, row)
     k = _key(pi, row)
@@ -299,27 +386,41 @@ def _tour_row(pi: int, row: dict, is_latest: bool) -> None:
     if is_latest:
         c = st.columns([4, 1.4, 2.2, 2.6])
         c[0].write(label)
-        e["qty"] = c[1].number_input("수량", min_value=0, max_value=999, step=1,
-                                     value=int(e["qty"]), key=f"q-{k}",
-                                     label_visibility="collapsed")
+        # ⚠️ 세션에 이미 값이 있으면 value= 를 주지 않는다. 둘 다 주면 Streamlit 이
+        #    "default value 와 Session State 를 같이 썼다" 고 경고를 콘솔에 쏟아낸다
+        #    (빠른 입력이 수량을 넣을 때마다 줄 수만큼 찍힌다).
+        e["qty"] = c[1].number_input(
+            "수량", min_value=0, max_value=999, step=1, key=f"q-{k}",
+            label_visibility="collapsed",
+            **({} if f"q-{k}" in st.session_state else {"value": int(e["qty"])}))
         # ⚠️ 예약에 없는 언어·픽업지도 반드시 고를 수 있어야 한다.
         #    '중국어 불가' 나 '홍대 제외' 는 그 언어·픽업지의 예약이 **없을 때**
         #    하는 지시다. 예약을 기준으로 후보를 만들면 정작 필요한 순간에
         #    목록에 없어서 뺄 수가 없고, 그대로 '전체' 로 나가 열려 버린다.
         #    (2026-08-31: Seasonal BTS 홍대가 목록에 없어 못 뺐고 2자리가 열렸다)
         #    그래도 없는 이름은 직접 적을 수 있게 열어 둔다.
-        langs = row.get("languages") or []
+        #    ⚠️ 되살린 값에 후보에 없는 것이 있으면 **화면 전체가 안 열린다.**
+        #       직접 적어 넣은 값(accept_new_options)이 그대로 저장되기 때문이다.
+        #       실제로 lm_entries 에 언어 'chinese,english' 가 남아 있었고,
+        #       그 파일을 다시 불러오는 순간 Last Minute 탭이 통째로 죽었다
+        #       (StreamlitAPIException: default value is not part of the options).
+        #       지우지 않고 후보에 얹는다 — 사람이 보고 직접 빼면 된다.
+        langs = _with_saved(row.get("languages") or [], e["lang"])
         if langs:
             e["lang"] = c[2].multiselect(
-                "언어", langs, default=e["lang"], key=f"l-{k}",
+                "언어", langs, key=f"l-{k}",
                 format_func=lambda x: LANG_LABEL.get(x, x),
                 label_visibility="collapsed", placeholder="언어",
-                accept_new_options=True)
-        picks = row.get("pickups") or []
+                accept_new_options=True,
+                **({} if f"l-{k}" in st.session_state
+                   else {"default": [x for x in e["lang"] if x in langs]}))
+        picks = _with_saved(row.get("pickups") or [], e["pick"])
         known = set(row.get("pickups_known") or [])
         if picks:
             e["pick"] = c[3].multiselect(
-                "픽업", picks, default=e["pick"], key=f"p-{k}",
+                "픽업", picks, key=f"p-{k}",
+                **({} if f"p-{k}" in st.session_state
+                   else {"default": [x for x in e["pick"] if x in picks]}),
                 # GG 에서 확인된 것과 '같은 지역이라 아마 있을 것' 을 구분한다.
                 # 없는 픽업지를 골라도 수량이 사라지진 않는다 — gg_open 은
                 # 화면에서 실제로 찾은 옵션 개수로 나눈다.
