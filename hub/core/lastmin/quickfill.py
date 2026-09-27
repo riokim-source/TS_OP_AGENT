@@ -45,6 +45,10 @@ _SHORT = {"korean": "한", "english": "영", "chinese": "중", "japanese": "일"
 
 _EXCLUDE_WORDS = ("불가", "제외", "없음", "안됨", "안 됨", "x", "X")
 
+# "언어 상관 없음" = 제한이 없다는 뜻이다. 빼라는 말이 아니다.
+_ANY_LANG_WORDS = ("언어무관", "언어 무관", "무관", "상관없음", "상관 없음",
+                   "전부", "모두", "all", "any")
+
 
 def _lang_pattern() -> re.Pattern:
     parts = []
@@ -79,6 +83,7 @@ class Item:
     langs_out: list[str] = field(default_factory=list)   # 이건 뺀다
     pickup_out: list[str] = field(default_factory=list)  # 이 픽업지는 뺀다
     unknown: str = ""                                    # 괄호 안에서 못 알아들은 글
+    full_name: str = ""                                  # 괄호까지 붙은 이름 (옵션명일 때)
 
 
 def split_entries(text: str) -> list[str]:
@@ -105,6 +110,11 @@ def split_entries(text: str) -> list[str]:
 
 def _read_options(content: str) -> tuple[list[str], list[str], list[str], str]:
     """괄호 속 글 -> (열 언어, 뺄 언어, 뺄 픽업지, 못 알아들은 글)."""
+    low = str(content or "").strip().lower()
+    if any(w in low for w in _ANY_LANG_WORDS):
+        # '(언어무관)' — 좁히지 않는다. 여기서 언어 낱말을 찾으려 들면
+        # '무관' 의 '관' 같은 글자에 걸려 엉뚱하게 좁혀질 수 있다.
+        return [], [], [], ""
     hits: list[tuple[int, int, str]] = []
     for m in _LANG_RE.finditer(content):
         code = (m.lastgroup or "").rsplit("_", 1)[0]
@@ -168,8 +178,14 @@ def parse(text: str) -> list[Item]:
         m = _QTY_RE.match(body.strip())
         name = (m.group("name") if m else body).strip(" :：,·")
         qty = int(m.group("qty")) if m else None
+        # ⚠️ 괄호 안이 옵션명일 수도 있다 ('남이섬셔틀 (Ferry Ticket)').
+        #    그래서 괄호를 지우지 않은 이름도 같이 들고 간다. 짝짓기에서
+        #    이쪽을 먼저 보고, 그게 맞으면 괄호는 옵션명으로 쓴 것이다.
+        m2 = _QTY_RE.match(raw.strip())
+        full = (m2.group("name") if m2 else raw).strip(" :：,·")
         items.append(Item(raw=raw, name=name, qty=qty, langs_in=langs_in,
-                          langs_out=langs_out, pickup_out=pickup_out, unknown=unknown))
+                          langs_out=langs_out, pickup_out=pickup_out, unknown=unknown,
+                          full_name=full))
     return items
 
 
@@ -225,7 +241,15 @@ def resolve(items: list[Item], rows: list[dict]) -> tuple[dict, list[str]]:
         if not it.name:
             problems.append(f"'{it.raw}' — 상품명을 못 읽었습니다")
             continue
-        found = index.get(norm(it.name)) or []
+        # 괄호까지 붙은 이름이 그대로 한 줄과 맞으면 그게 옵션명이다.
+        # 그때는 괄호를 언어·픽업으로 읽은 것을 버린다.
+        as_option = False
+        found = []
+        if it.full_name and norm(it.full_name) != norm(it.name):
+            found = index.get(norm(it.full_name)) or []
+            as_option = bool(found)
+        if not found:
+            found = index.get(norm(it.name)) or []
         if not found:
             problems.append(f"'{it.name}' — 이 지역 목록에 없는 이름입니다")
             continue
@@ -244,6 +268,8 @@ def resolve(items: list[Item], rows: list[dict]) -> tuple[dict, list[str]]:
 
         langs_all = list(row.get("languages") or [])
         picks_all = list(row.get("pickups") or [])
+        if as_option:
+            it = Item(raw=it.raw, name=it.full_name, qty=it.qty)   # 괄호는 옵션명이었다
 
         lang = list(langs_all)
         if it.langs_out:

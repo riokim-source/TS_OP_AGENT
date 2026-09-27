@@ -13,6 +13,7 @@ Office / OP 메모 기준선 회귀 테스트.
   2) 전일 패널       : 'Last Min 10시 후 예약' 자동 집계
                       (투어일자 전날 10:00 이후 들어온 예약을 채널별 합산)
   3) Office 는 제한 표기 없이 '상품명 수량' 만
+     (2026-09-27: [TPC] 수량을 GG 와 같은 규칙으로 바꿨다 → Office 도 절반)
   4) OP 는 Klook 언어 변형 상품명 사용
 """
 import sys
@@ -40,7 +41,7 @@ Last Min 오픈:
 [KK]: 경주
 [VI]: 경주
 [GG]: 경주 12, Toyako Niseko 12
-[TPC]: 경주 25, 선셋캡슐 East 3, Yufuin Dazaifu 3, Biei Furano 1
+[TPC]: 경주 12
 [CP]: Toyako Niseko 12
 [MRT]: Kamakura Yokohama 6, Mt. Fuji Signature 8, Amanohashidate 5, Fukuoka Foodie 3, Yufuin Dazaifu 3, Biei Furano 1, Toyako Niseko 24
 

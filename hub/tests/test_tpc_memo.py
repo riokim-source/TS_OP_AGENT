@@ -11,10 +11,10 @@
 
   2) 줄 순서는 [GG] 다음, [CP] 앞.
 
-  3) 수량 (2026-09-11 에 CP 와 서로 바꾼 것)
-       TPC : Office q >= 1  -> 전량 / OP q >= 20 -> 절반   (지역 무관)
+  3) 수량 (2026-09-27: TPC 는 **GG 와 똑같다**)
+       TPC : Office q >= 15 -> 절반 / OP q >= 20 -> 절반   (지역 무관)
        CP  : Office q >= 15 -> 절반 / OP q >= 20 -> 절반   (일본만)
-       MRT : 예전 그대로 — 이 교체에 안 딸려갔다
+       MRT : 예전 그대로
 
   4) tpc_targets.py 에 없는 상품은 Office/OP 둘 다 건너뛴다.
 
@@ -84,20 +84,20 @@ for name, want in (("경주", True), ("감천미포", True), ("Mt. Fuji Highligh
 
 # ── 3) 수량 (CP 와 서로 바꾼 규칙) ──────────────────────────────────────
 print()
-print("  [3] 수량 — TPC 는 전량/절반, CP 는 GG 와 같다")
+print("  [3] 수량 — TPC·CP 둘 다 GG 와 같다")
 print(f"     {'지역':7} {'q':>3} | {'TPC':>12} | {'CP':>10} | {'MRT':>10}")
 CASES = [
     # 지역,    q,   TPC(Office/OP),  CP(Office/OP),  MRT(Office/OP)
-    ("Tokyo", 1, (1, 0), (0, 0), (1, 0)),
-    ("Tokyo", 14, (14, 0), (0, 0), (14, 14)),
-    ("Tokyo", 15, (15, 0), (7, 0), (15, 15)),
-    ("Tokyo", 19, (19, 0), (9, 0), (19, 19)),
-    ("Tokyo", 20, (20, 10), (10, 10), (20, 10)),
-    ("Tokyo", 30, (30, 15), (15, 15), (30, 15)),
+    ("Tokyo", 1, (0, 0), (0, 0), (1, 0)),
+    ("Tokyo", 14, (0, 0), (0, 0), (14, 14)),
+    ("Tokyo", 15, (7, 0), (7, 0), (15, 15)),
+    ("Tokyo", 19, (9, 0), (9, 0), (19, 19)),
+    ("Tokyo", 20, (10, 10), (10, 10), (20, 10)),
+    ("Tokyo", 30, (15, 15), (15, 15), (30, 15)),
     # 한국은 CP·MRT 가 아예 없다 (특별지역이 아니다). TPC 는 지역을 안 가린다.
-    ("Busan", 1, (1, 0), (0, 0), (0, 0)),
-    ("Busan", 20, (20, 10), (0, 0), (0, 0)),
-    ("Busan", 30, (30, 15), (0, 0), (0, 0)),
+    ("Busan", 1, (0, 0), (0, 0), (0, 0)),
+    ("Busan", 20, (10, 10), (0, 0), (0, 0)),
+    ("Busan", 30, (15, 15), (0, 0), (0, 0)),
 ]
 NAME = {"Tokyo": "Mt. Fuji Highlight", "Busan": "경주"}
 
@@ -122,15 +122,16 @@ for area, q, w_tpc, w_cp, w_mrt in CASES:
 
 # CP 는 GG 와 같은 몫이어야 한다 (일본에서)
 print()
-print("  [3-2] CP 가 GG 와 같은 몫인가 (일본)")
+print("  [3-2] CP·TPC 가 GG 와 같은 몫인가 (일본)")
 for q in (15, 19, 20, 30):
     d_off = calc.distribute("Tokyo", "Mt. Fuji Highlight", q, False)
     d_op = calc.distribute("Tokyo", "Mt. Fuji Highlight", q, True)
-    same = (_n(d_off["CP"]), _n(d_op["CP"])) == (_n(d_off["GG"]), _n(d_op["GG"]))
+    same = ((_n(d_off["CP"]), _n(d_op["CP"])) == (_n(d_off["GG"]), _n(d_op["GG"]))
+            and (_n(d_off["TPC"]), _n(d_op["TPC"])) == (_n(d_off["GG"]), _n(d_op["GG"])))
     print(f"     q={q:3}  CP {_n(d_off['CP'])}/{_n(d_op['CP'])}"
           f"  GG {_n(d_off['GG'])}/{_n(d_op['GG'])}  {'같음' if same else '!! 다름'}")
     if not same:
-        bad.append(f"CP 가 GG 와 다르다 (q={q})")
+        bad.append(f"CP/TPC 가 GG 와 다른 몫이다 (q={q})")
 
 # ── 4) 언어 표기 ────────────────────────────────────────────────────────
 print()
@@ -138,9 +139,9 @@ print("  [4] 언어 표기 (Office 엔 안 붙는다)")
 KR = RowInput(area="Busan", product="경주", qty=25)
 JP = RowInput(area="Tokyo", product="Mt. Fuji Highlight", qty=30)
 for label, rows, is_op, want in (
-        ("Office 한국", [KR], False, "경주 25"),
+        ("Office 한국", [KR], False, "경주 12"),
         ("OP     한국", [KR], True, "경주(중) 12"),
-        ("Office 일본", [JP], False, "Mt. Fuji Highlight 30"),
+        ("Office 일본", [JP], False, "Mt. Fuji Highlight 15"),
         ("OP     일본", [JP], True, "Mt. Fuji Highlight(한) 15")):
     got = memo_line(rows, is_op, "TPC")
     mark = "" if got == want else f"   !! 기대 '{want}'"
@@ -180,7 +181,7 @@ r = RowInput(area="Busan", product="경주", qty=25,
              languages_all=LANGS, languages_sel=["english"])
 off = memo_line([r], False, "TPC")
 print(f"     Office (영어만)                     -> '{off}'")
-if off != "경주 25":
+if off != "경주 12":
     bad.append(f"Office 가 언어 제한에 걸렸다: '{off}'")
 
 # ── 6) 계획에는 표시 없는 이름이 간다 ───────────────────────────────────

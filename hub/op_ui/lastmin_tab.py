@@ -277,6 +277,7 @@ def render(lock) -> None:
 
     latest = next((i for i, p in enumerate(panels) if p["is_latest"]), 0)
 
+    _outsourced_block(latest, panels[latest])
     _quick_fill(latest, panels[latest])
     st.divider()
 
@@ -290,6 +291,8 @@ def render(lock) -> None:
             if not p["is_latest"]:
                 st.caption("전날 10시 이후 들어온 예약을 자동 집계한 값입니다. 그대로 두면 됩니다.")
             for g in p["groups"]:
+                if p["is_latest"] and g.get("region") == OUTSOURCED_GROUP:
+                    continue      # 맨 위에 이미 그렸다 (위젯 키가 겹친다)
                 st.markdown(f"**{g['region']}**")
                 for a in g["areas"]:
                     st.caption(a["area"])
@@ -345,6 +348,30 @@ def _apply_quick(pi: int, rows: list, text: str) -> tuple[int, list[str]]:
     return len(assign), problems
 
 
+OUTSOURCED_GROUP = "아웃소싱"
+
+
+def _outsourced_block(pi: int, panel: dict) -> None:
+    """
+    예약 파일에 안 나오는 상품 (아웃소싱). 화면 맨 위에 둔다.
+
+    ⚠️ 여기는 **빠른 입력 대상이 아니다.** 예전처럼 수량·언어·픽업을 직접
+       고른다 (2026-09-27 요청). 예약이 없어 줄이 안 생기던 상품이라
+       빠른 입력 칸에 적으면 '이 지역 목록에 없는 이름' 으로만 나왔다.
+    """
+    rows = [(a["area"], r) for g in panel["groups"]
+            if g.get("region") == OUTSOURCED_GROUP
+            for a in g["areas"] for r in a["rows"]]
+    if not rows:
+        return
+    st.markdown(f"**{OUTSOURCED_GROUP}** — 예약에 안 잡히는 상품입니다. "
+                "여기는 직접 넣으세요.")
+    for area, row in rows:
+        st.caption(area)
+        _tour_row(pi, row, True)
+    st.divider()
+
+
 def _quick_fill(pi: int, panel: dict) -> None:
     """지역마다 빈칸 하나. 적은 글을 그대로 읽어 아래 수량·옵션을 채운다."""
     st.markdown("**빠른 입력** — 지역 칸에 적으면 아래 수량·언어·픽업이 채워집니다.")
@@ -356,6 +383,8 @@ def _quick_fill(pi: int, panel: dict) -> None:
     notes = st.session_state.setdefault("lm_qf_note", {})
 
     for g in panel["groups"]:
+        if g.get("region") == OUTSOURCED_GROUP:
+            continue              # 아웃소싱은 위에서 예전 방식으로 받는다
         for a in g["areas"]:
             area = a["area"]
             c1, c2 = st.columns([1, 6])

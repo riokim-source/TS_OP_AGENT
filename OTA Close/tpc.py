@@ -262,6 +262,33 @@ def closed_by_us(target_date: str) -> dict[str, list[str]]:
     return out
 
 
+# 그 지역에서 **여는** 패키지의 언어. 마감은 전부 닫지만, 오픈은 이것만 연다.
+#   한국 상품 -> 중국어 가이드   (Trip.com 에서 한국 투어는 중국어로 판다)
+#   일본 상품 -> 한국어 가이드
+#   호주     -> 정해진 것이 없다 (None → 아침에 닫은 것을 그대로 되연다)
+# ⚠️ 라스트미닛 메모의 (중)/(한) 표기와 같은 규칙이다
+#    (hub/core/lastmin/memo.py 의 tpc_language_of). 둘이 어긋나면
+#    메모에는 '중국어로 연다' 고 적혀 있는데 봇은 딴 패키지를 연다.
+OPEN_LANGUAGE = {"KOREA": "chinese", "JAPAN": "korean"}
+
+# 패키지 이름에 쓰이는 언어 표기. 중국어 화면·영문 화면이 섞여 나온다.
+_PKG_LANG_WORDS = {
+    "korean":   ("韩文", "韩语", "한국어", "korean"),
+    "chinese":  ("中文", "中语", "중국어", "chinese"),
+    "english":  ("英文", "英语", "영어", "english"),
+    "japanese": ("日文", "日语", "일본어", "japanese"),
+}
+
+
+def package_language(name: str) -> Optional[str]:
+    """패키지 이름에서 가이드 언어를 읽는다. 못 읽으면 None."""
+    t = str(name or "").lower()
+    for code, words in _PKG_LANG_WORDS.items():
+        if any(w.lower() in t for w in words):
+            return code
+    return None
+
+
 def process_product(port: int, target: dict, target_date: str, mode: str,
                     dry_run: bool, reopen: Optional[dict] = None) -> ProductResult:
     """상품 하나를 처음부터 끝까지. 봇이 연 탭은 반드시 정리한다."""
@@ -351,6 +378,24 @@ def process_product(port: int, target: dict, target_date: str, mode: str,
             if skipped_not_mine:
                 log(f"우리가 닫지 않아서 건드리지 않는 패키지 {len(skipped_not_mine)}개: "
                     f"{', '.join(skipped_not_mine)[:100]}")
+
+            # ⚠️ 오픈은 **그 지역이 파는 언어 하나만** 연다 (OPEN_LANGUAGE).
+            #    아침에 닫은 것을 전부 되열면 안 판다고 정한 언어까지 열린다
+            #    (2026-09-27: Mt. Fuji Highlight 가 한국어·중국어·영어 4개
+            #     패키지 전부 열렸다. 일본 상품은 한국어만 열어야 한다).
+            want_lang = OPEN_LANGUAGE.get(str(target.get("region") or "").upper())
+            if want_lang:
+                keep = [n for n in need if package_language(n) == want_lang]
+                other = [n for n in need if n not in keep]
+                if other:
+                    log(f"{want_lang} 가 아니라 열지 않는 패키지 {len(other)}개: "
+                        f"{', '.join(other)[:110]}")
+                need = keep
+                if not need:
+                    r.status = Status.ALREADY
+                    r.detail = (f"아침에 닫은 것 중 {want_lang} 패키지가 없습니다 "
+                                f"(이 지역은 {want_lang} 만 엽니다)")
+                    return r
         if not need:
             if not buckets["on"] and not buckets["off"]:
                 r.status = Status.NOT_ON_SALE

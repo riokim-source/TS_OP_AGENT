@@ -386,6 +386,51 @@ for region, prof in want_route.items():
 print("     봇의 REGION_PORT 와 라우팅 포트가 같다 — OK")
 
 
+# ── 오픈은 그 지역이 파는 언어만 연다 (2026-09-27) ───────────────────────
+#   아침에 닫은 것을 전부 되열면 안 판다고 정한 언어까지 열린다.
+#   실제로 Mt. Fuji Highlight 가 한국어·중국어·영어 4개 패키지 전부 열렸다.
+#     한국 상품 -> 중국어 / 일본 상품 -> 한국어 / 호주 -> 정한 것 없음
+print()
+print("  [오픈 언어] 지역별로 여는 언어")
+print(f"     {tpc.OPEN_LANGUAGE}")
+if tpc.OPEN_LANGUAGE.get("KOREA") != "chinese":
+    bad.append("한국 상품은 중국어만 열어야 한다")
+if tpc.OPEN_LANGUAGE.get("JAPAN") != "korean":
+    bad.append("일본 상품은 한국어만 열어야 한다")
+if tpc.OPEN_LANGUAGE.get("AUSTRALIA"):
+    bad.append("호주는 정해진 언어가 없어야 한다 (정하면 아침에 닫은 것이 안 열린다)")
+
+for name, want in (("A-Korean Speaking Guide", "korean"),
+                   ("D-[Time Sale] Korean Speaking Guide", "korean"),
+                   ("B-Chinese Speaking Guide", "chinese"),
+                   ("A-中文导游 (常规)", "chinese"),
+                   ("C-韩文导游 (常规)", "korean"),
+                   ("H-日文导游 (早班)", "japanese"),
+                   ("I-包车(按人数选购) 中文导游", "chinese"),
+                   ("E-英文导游 [三月 ~ 九月]", "english"),
+                   ("이름만 있는 패키지", None)):
+    got = tpc.package_language(name)
+    print(f"     {name:36} -> {got}")
+    if got != want:
+        bad.append(f"'{name}' 언어가 {got} (기대 {want})")
+
+# 메모의 언어 규칙과 같은 말을 해야 한다 (어긋나면 메모와 봇이 딴 짓을 한다)
+sys.path.insert(0, str(ROOT / "hub"))
+from core.lastmin.memo import tpc_language_of            # noqa: E402
+for area, region in (("Busan", "KOREA"), ("Seoul", "KOREA"),
+                     ("Tokyo", "JAPAN"), ("Sapporo", "JAPAN")):
+    if tpc_language_of(area) != tpc.OPEN_LANGUAGE.get(region):
+        bad.append(f"{area}: 메모는 {tpc_language_of(area)} 인데 봇은 "
+                   f"{tpc.OPEN_LANGUAGE.get(region)} 를 연다")
+print(f"     메모 규칙과 같은가: {'예' if not any('메모는' in b for b in bad) else '!! 아니오'}")
+
+BODY_ = (ROOT / "OTA Close" / "tpc.py").read_text(encoding="utf-8")
+i_filter = BODY_.find("want_lang = OPEN_LANGUAGE.get")
+i_open = BODY_.find("D.dialog_select_packages(edit, need, log)")
+if not (0 < i_filter < i_open):
+    bad.append("언어로 거르기 전에 패키지를 골라 버린다")
+print("     고르기 전에 언어로 거른다 — OK")
+
 # ── 결과 ─────────────────────────────────────────────────────────────────
 print()
 if bad:

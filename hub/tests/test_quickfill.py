@@ -199,6 +199,27 @@ got2 = Q.split_entries("감천미포 4\n경주 4, 교촌경주 10")
 if got2 != ["감천미포 4", "경주 4", "교촌경주 10"]:
     bad.append(f"줄바꿈/쉼표 섞인 것을 못 나눴다: {got2}")
 
+# ── 6) 괄호가 옵션명일 때 / 언어무관 ────────────────────────────────────
+print()
+print("  [6] 괄호 속이 옵션명이거나 '언어무관' 일 때 (2026-09-27)")
+OPT = [row("Seoul", "남이섬셔틀", "(옵션없음)"), row("Seoul", "남이섬셔틀", "Ferry Ticket"),
+       row("Fukuoka", "Kumamoto Takachiho")]
+C6 = [
+    ("남이섬셔틀 (ferry ticket) 8", "Seoul|남이섬셔틀|Ferry Ticket", 8, KO),
+    ("남이섬셔틀 15", "Seoul|남이섬셔틀|(옵션없음)", 15, KO),
+    ("Kumamoto Takachiho 19(언어무관)", "Fukuoka|Kumamoto Takachiho|", 19, KO),
+]
+for text, key, qty, langs in C6:
+    a, p = Q.resolve(Q.parse(text), OPT)
+    got = a.get(key)
+    ok = got and got["qty"] == qty and got["lang"] == langs
+    print(f"     {text:34} -> {key.split('|', 1)[1]:26} "
+          f"{got['qty'] if got else '(못 읽음)'}{'' if ok else f'   !! 기대 {qty}/{langs}'}")
+    if not ok:
+        bad.append(f"'{text}' -> {got} (기대 {qty} / {langs})")
+    if p:
+        bad.append(f"'{text}' 에서 알림이 떴다: {p}")
+
 print()
 if bad:
     for b in bad:

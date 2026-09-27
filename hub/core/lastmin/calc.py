@@ -161,16 +161,19 @@ def tpc_share(product: str, q: int, is_op: bool) -> int:
     ⚠️ 지정 목록(tpc_targets.py)에 없는 상품은 Office/OP 둘 다 건너뛴다.
        봇이 열 수 없는 것을 메모에 적으면 사람이 손으로 찾아 열어야 한다.
 
-    수량 규칙 (2026-09-11 에 CP 와 서로 바꾼 것)
-        Office : q >= 1  -> 전량
-        OP     : q >= 20 -> 절반   (20 미만은 적지 않는다)
+    수량 규칙 (2026-09-27 부터 **GG 와 똑같다**)
+        Office : q >= 15 -> 절반(내림)
+        OP     : q >= 20 -> 절반(내림)
+        임계값 미만은 적지 않는다.
     지역과 무관하다 — 한국 상품도 같은 규칙을 쓴다.
+
+    (09-11 에는 CP 와 서로 바꿔서 'Office 전량' 을 썼다. 운영에서
+     GG 와 같은 몫으로 맞추기로 해서 되돌렸다.)
     """
     if q <= 0 or not in_tpc_list(product):
         return 0
-    if not is_op:
-        return q
-    return q // 2 if q >= C.THRESHOLD_OP else 0
+    floor = C.THRESHOLD_OP if is_op else C.THRESHOLD_OFFICE
+    return q // 2 if q >= floor else 0
 
 
 def distribute(area: str, product: str, qty: int, is_op: bool) -> dict[str, list[str]]:

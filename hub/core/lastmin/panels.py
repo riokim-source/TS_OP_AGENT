@@ -13,8 +13,36 @@ from datetime import datetime
 
 from . import constants as C
 from . import loader as lmloader
+from . import outsourced as lmoutsourced
 from .memo import available_languages
 from .. import pickups as lmpickups
+
+
+def _outsourced_group(groups: list, pk_cat: dict, pk_pool: dict) -> list:
+    """
+    예약 파일에 안 나오는 상품의 줄을 만든다 (outsourced.py).
+
+    ⚠️ 같은 줄이 이미 있으면 만들지 않는다. 둘이 되면 수량이 두 번 들어간다.
+    ⚠️ 맨 뒤에 붙인다. 메모의 상품 순서를 흔들지 않기 위해서다
+       (화면에서는 맨 위에 그린다 — 그건 화면 쪽 일이다).
+    """
+    have = {f"{a['area']}|{r['product']}|{r.get('option') or ''}"
+            for g in groups for a in g["areas"] for r in a["rows"]}
+    by_area: dict[str, list[dict]] = {}
+    for item in lmoutsourced.rows():
+        key = f"{item['area']}|{item['product']}|{item['option']}"
+        if key in have:
+            continue
+        by_area.setdefault(item["area"], []).append({
+            "area": item["area"], "region": "아웃소싱", "product": item["product"],
+            "option": item["option"], "key": key, "option_split": bool(item["option"]),
+            "people": 0, "by_channel": {}, "languages": [], "pickups": [],
+            "options": [], "lastmin": {}, "outsourced": True,
+        })
+    if not by_area:
+        return []
+    return [{"region": "아웃소싱",
+             "areas": [{"area": a, "rows": rs} for a, rs in by_area.items()]}]
 
 
 def build_panels(raw: bytes, filename: str,
@@ -47,6 +75,9 @@ def build_panels(raw: bytes, filename: str,
     for idx, d in enumerate(dates):
         # 전일 패널만 'Last Min 10시 후 예약' 을 자동 집계한다
         groups = lmloader.build_tree(df, d, with_lastmin=(idx != 0))
+        if idx == 0:
+            # 예약이 없어도 매일 수량을 넣어야 하는 상품 (아웃소싱)
+            groups = groups + _outsourced_group(groups, pk_cat, pk_pool)
         for g in groups:
             for a in g["areas"]:
                 for row in a["rows"]:
