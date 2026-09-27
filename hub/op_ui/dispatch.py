@@ -223,7 +223,7 @@ def chrome_call(action: str, params: dict, agent: str | None = None,
 def start(kind: str, title: str, params: dict, total: int = 0,
           agent: str | None = None, pre_results: list | None = None) -> tuple[bool, str]:
     """
-    kind: "close" | "open"
+    kind: "close" | "open" | "review"
     반환 (시작됨, 오류메시지)
     """
     if is_central():
@@ -245,6 +245,11 @@ def start(kind: str, title: str, params: dict, total: int = 0,
             close_runner.run(j, params.get("date"), params.get("agencies") or [],
                              params.get("regions") or [],
                              dry_run=bool(params.get("dry_run")))
+        elif kind == "review":
+            # 리뷰 수집도 Agent 와 **같은 함수**를 부른다. 두 벌로 두면
+            # 한쪽만 고쳐져서 화면과 웹이 다른 짓을 한다 (_run_open_local 설명).
+            from core.review import runner as review_runner
+            review_runner.run(j, params)
         else:
             _run_open_local(j, params)
 

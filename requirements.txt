@@ -13,3 +13,6 @@ websockets>=12.0
 
 # Firebase Realtime Database (중계 지점) 인증용
 google-auth>=2.0
+
+# 리뷰 수집은 로그인된 Chrome 에 붙어서 읽는다 (마감 봇의 playwright 와 별개)
+selenium>=4.20

@@ -251,6 +251,8 @@ def run_job(agent_name: str, spec: dict) -> None:
             _run_open(job, p)
         elif kind == "chrome":
             _run_chrome(job, p)
+        elif kind == "review":
+            _run_review(job, p)
         else:
             job.done(error=f"알 수 없는 작업 종류: {kind}")
     except Exception as e:
@@ -324,6 +326,17 @@ def _run_chrome(job: RemoteJob, p: dict) -> None:
 def _run_open(job: RemoteJob, p: dict) -> None:
     """오픈 실행. 실제 순서는 core.opens.run_all 한 곳에만 있다."""
     run_all.run_open(job, p)
+
+
+def _run_review(job: RemoteJob, p: dict) -> None:
+    """
+    리뷰 수집·분석. 엔진은 'Review Analyzer' 폴더에 있고, Chrome 은 이 PC 것을 쓴다.
+
+    ⚠️ 클라우드에서는 못 돈다 (로그인된 Chrome 이 여기 있다). 그래서 웹 화면은
+       이 작업을 Agent 로 보낸다. 결과 엑셀도 이 PC 에 남는다.
+    """
+    from core.review import runner as review_runner
+    review_runner.run(job, p)
 
 
 BUSY = {"on": False}          # 지금 작업을 돌고 있나

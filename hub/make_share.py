@@ -69,6 +69,12 @@ INCLUDE_DIRS = [
     ("hub/tests", "회귀 테스트 — 고친 뒤 확인용"),
     ("OTA Close/shared", "마감 봇 공통 코드"),
     ("OTA Close/chrome_launchers", "Chrome 프로필 실행"),
+    # 리뷰 수집·분석 엔진. 이 PC 에서 도는 것이라 묶음에 반드시 들어가야 한다
+    # (안 들어가면 웹에서 [리뷰 분석] 을 눌러도 Agent 가 '엔진이 없다' 고 한다).
+    ("Review Analyzer/rcore", "리뷰 분석 엔진"),
+    ("Review Analyzer/collectors", "OTA 별 리뷰 수집"),
+    ("Review Analyzer/analysis", "리뷰 분석"),
+    ("Review Analyzer/export", "결과 엑셀"),
 ]
 
 INCLUDE_FILES = [
