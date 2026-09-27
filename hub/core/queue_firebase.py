@@ -93,12 +93,33 @@ def database_url() -> str:
     return url.rstrip("/")
 
 
+def _on_cloud() -> bool:
+    """Streamlit Cloud 에서 도는 중인가 (PC 와 안내 문구가 달라야 한다)."""
+    try:
+        import streamlit as st
+        return bool(st.secrets)          # secrets 가 있으면 클라우드 쪽이다
+    except Exception:
+        return False
+
+
 def available() -> tuple[bool, str]:
     if not _secrets_blob():
-        return False, ("Firebase 서비스 계정이 없습니다. "
-                       f"{SA_FILE} 를 두거나 Streamlit secrets 에 [firebase] 를 넣으세요.")
+        # ⚠️ PC 에서 이 줄을 보는 사람은 'Streamlit secrets' 가 뭔지 모른다.
+        #    폴더를 새로 받으면 열쇠 파일이 안 딸려오기 때문에(일부러 뺀다)
+        #    팀원 PC 에서 제일 자주 나는 문제다. 무엇을 어디에 둘지만 말한다.
+        #    (2026-09-27: 팀원 PC 에서 Agent 가 안 켜졌다)
+        if _on_cloud():
+            return False, ("Firebase 서비스 계정이 없습니다. "
+                           "Streamlit Cloud → Settings → Secrets 에 "
+                           "[firebase] 블록을 넣으세요.")
+        return False, ("중계 열쇠가 없습니다. 관리자에게 "
+                       "firebase_service_account.json 을 받아서 "
+                       f"이 경로에 두세요:\n           {SA_FILE}\n"
+                       "           (GitHub 에서 새로 받으면 이 파일은 "
+                       "안 들어 있습니다 — 일부러 뺍니다)")
     if not database_url():
-        return False, "Firebase database_url 이 설정돼 있지 않습니다."
+        return False, ("중계 주소(database_url)가 없습니다. "
+                       f"{CONFIG} 에 넣거나, 열쇠 파일 안에 한 줄 있어야 합니다.")
     try:
         _access_token()
     except Exception as e:
