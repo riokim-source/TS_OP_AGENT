@@ -67,14 +67,47 @@ def default_agent_name() -> str:
            f"{os.environ.get('USERNAME') or 'user'}"
 
 
+def looks_auto_name(name: str) -> bool:
+    """'PC이름/사용자' 모양인가 (사람이 지은 이름이 아니라 자동으로 만든 것인가)."""
+    text = str(name or "").strip()
+    return text.count("/") == 1 and all(part.strip() for part in text.split("/"))
+
+
 def load_config() -> dict:
+    """
+    이 PC 의 이름표. 없으면 PC이름/사용자 로 만든다.
+
+    ⚠️ **폴더를 복사해 오면 남의 이름표가 따라온다.**
+       2026-09-27: 팀원이 Agent 를 켰는데 웹에는 'RIO/ktour' 한 대만 떴다.
+       폴더를 통째로 받아 가서 agent_config.json 까지 딸려간 것이다.
+       이름이 같으면 중계 지점에서 **서로의 신호를 덮어쓴다.** 두 사람이
+       같은 칸을 쓰니 화면에는 한 대만 보이고, 작업을 보내면 엉뚱한 PC 가
+       가져갈 수도 있다.
+
+       그래서 '이 이름표를 만든 PC' 를 같이 적어 둔다. 다른 PC 에서 켜지면
+       이름을 다시 만든다.
+
+    ⚠️ 사람이 직접 지은 이름(예: '부산PC')은 건드리지 않는다. 자동으로 만든
+       'PC이름/사용자' 모양일 때만 바꾼다 — 그건 그 PC 에서만 맞는 이름이다.
+    """
     c = {}
     if CONFIG.exists():
         try:
             c = json.loads(CONFIG.read_text(encoding="utf-8"))
         except Exception:
             c = {}
-    c.setdefault("agent", default_agent_name())
+
+    auto = default_agent_name()
+    name = str(c.get("agent") or "").strip()
+    made_on = str(c.get("made_on") or "").strip()
+    moved = bool(name) and (made_on != auto if made_on else
+                            (looks_auto_name(name) and name != auto))
+    if moved:
+        print(f"[안내] 이름표가 다른 PC 것입니다 ('{name}'). "
+              f"이 PC 이름으로 바꿉니다: {auto}")
+        name = auto
+    c["agent"] = name or auto
+    c["made_on"] = auto
     CONFIG.parent.mkdir(parents=True, exist_ok=True)
     CONFIG.write_text(json.dumps(c, ensure_ascii=False, indent=1), encoding="utf-8")
     return c
