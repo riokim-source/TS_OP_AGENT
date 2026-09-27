@@ -104,15 +104,25 @@ def code_version() -> dict:
             capture_output=True, timeout=10).stdout.strip()
         if out and "|" in out:
             h, at, sub = (out.split("|", 2) + ["", ""])[:3]
-            return {"commit": h, "at": at, "subject": sub[:70], "built": "(개발 폴더)"}
+            # version.json 이 없다 = 묶음이 아니라 저장소 코드를 그대로 돌리는 것.
+            #   개발 PC 의 작업 폴더이거나, Streamlit Cloud 가 GitHub 에서
+            #   받아 놓은 사본이다. 웹에서 이 줄을 보고 '지금 최신인가' 를 가른다.
+            return {"commit": h, "at": at, "subject": sub[:70], "built": "(저장소 코드)"}
     except Exception:
         pass
     return {"commit": "?", "at": "?", "subject": "", "built": ""}
 
 
 def version_line() -> str:
+    """화면 맨 위에 찍는 한 줄. '지금 도는 코드가 언제 것인가' 를 사람이 본다."""
     v = code_version()
-    tail = f" · 묶은 날 {v['built']}" if v.get("built") else ""
+    built = str(v.get("built") or "")
+    if built.startswith("("):
+        tail = f" · {built.strip('()')}"      # 묶음이 아니라 저장소 코드
+    elif built:
+        tail = f" · 묶은 날 {built}"
+    else:
+        tail = ""
     return f"코드 {v.get('commit', '?')} ({v.get('at', '?')}){tail}"
 
 
