@@ -143,6 +143,9 @@ PACKAGES_KOREA_ACTIVITY_DEFAULT: dict[str, str] = {
     'MBC 스튜디오(드라마 리허설)': '107366 ',
     'MBC 스튜디오(드라마 리허설)(중)': '107366 ',
     'MBC 스튜디오(드라마 리허설)(한)': '107366 ',
+    # 가을 한정 / 그 밖
+    '아미천마': '224469',
+    '설악산등산': '233675',
     # 부산
     '특공대(부산)': '107988',
     'BTS(부산)': '208114',
@@ -163,6 +166,13 @@ PACKAGES_KOREA_ACTIVITY_LATE22: dict[str, str] = {
 # id = Package ID (구버전 UI)
 # ──────────────────────────────────────────────────────────────────────────────
 PACKAGES_JAPAN_PACKAGE_DEFAULT: dict[str, str] = {
+    # 가을 한정 (2026-09-27 추가) — 구버전 UI 라 언어별 번호가 따로 있다
+    'Autumn Nikko': '571257',
+    'Autumn Nikko(한)': '722543',
+    'Autumn Nikko(중)': '722665',
+    'Autumn Usa': '571296',
+    'Autumn Usa(한)': '716818',
+    'Autumn Usa(중)': '716830',
     # 도쿄
     'Mt. Fuji Highlight': '391454',
     'Mt. Fuji Highlight(중)': '535021',
@@ -249,6 +259,18 @@ PACKAGES_JAPAN_ACTIVITY_DEFAULT: dict[str, str] = {
     'Itoshima Marine(한)': '222117',
     'Nagasaki': '231128',
     'Nagasaki(한)': '231128',
+    # 가을 한정 (2026-09-27 추가)
+    #   ⚠️ Autumn Hitachi 는 Hitachi Ashikaga 와 같은 Activity(145488)다.
+    #      운영에서 부르는 이름이 둘이라 양쪽 다 적어 둔다.
+    'Attack on Titan': '232801',
+    'Autumn Asahidake': '225351',
+    'Autumn Kumamoto': '225564',
+    'Autumn Shikotsu': '221815',
+    'Autumn Hitachi': '145488',
+    'Autumn Takao': '226107',
+    'Autumn Nara': '223971',
+    'Autumn Shiga': '226773',
+    'Autumn Nagoya': '227081',
     # 꽃
     'Hitachi Ashikaga': '145488',
     'Hitachi Ashikaga(한)': '145488',
@@ -300,6 +322,9 @@ PACKAGES_AUSTRALIA_ACTIVITY_DEFAULT: dict[str, str] = {
     'Hunter Valley(WINERY + ARCHERY)(중)': '201033',
     'Hunter Valley(WINERY + ARCHERY)(한)': '201033',
     'Wollongong Kiama': '207779',
+    # 봄 한정 (2026-09-27 추가)
+    'Canberra Floriade': '221170',
+    'Sydney Jacaranda': '221120',
 }
 
 # ──────────────────────────────────────────────────────────────────────────────

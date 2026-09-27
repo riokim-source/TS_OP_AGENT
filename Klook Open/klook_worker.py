@@ -4030,13 +4030,19 @@ def _parse_language_target(name: str) -> dict:
     aliases 리스트로 Klook 가 어떻게 표기하든 매칭 가능.
     """
     name = (name or '').strip()
+    # explicit = 이름에 언어가 **적혀 있다**. 그 언어 줄을 못 찾으면 영어로
+    # 흘러가면 안 된다 (2026-09-03: '(한) 6' 을 열랬는데 영어가 6자리 열렸다).
     if name.endswith('(한)') or name.endswith('(KR)') or name.endswith('(ko)'):
-        return {'label': 'Korean', 'aliases': ['Korean', '한국어', '한국', 'KOR', '韩语']}
+        return {'label': 'Korean', 'explicit': True,
+                'aliases': ['Korean', '한국어', '한국', 'KOR', '韩语']}
     if name.endswith('(중)') or name.endswith('(CN)') or name.endswith('(zh)'):
-        return {'label': 'Chinese', 'aliases': ['Chinese', 'Chinese (Simplified)', 'Simplified Chinese', '中文', '简体中文', 'CN']}
+        return {'label': 'Chinese', 'explicit': True,
+                'aliases': ['Chinese', 'Chinese (Simplified)', 'Simplified Chinese', '中文', '简体中文', 'CN']}
     if name.endswith('(일)') or name.endswith('(JP)') or name.endswith('(ja)'):
-        return {'label': 'Japanese', 'aliases': ['Japanese', '日本語', 'JP', '일본어']}
-    return {'label': 'English', 'aliases': ['English', 'EN', '영어', '英语']}
+        return {'label': 'Japanese', 'explicit': True,
+                'aliases': ['Japanese', '日本語', 'JP', '일본어']}
+    return {'label': 'English', 'explicit': False,
+            'aliases': ['English', 'EN', '영어', '英语']}
 
 
 
@@ -4427,10 +4433,16 @@ def click_activity_adult_inventory_item(page, target_language=None):
  valid.sort((a, b) => b.score - a.score);
  labels.length = 0;
  for (const v of valid) labels.push(v.lab);
+ } else if (window.__targetLangExplicit) {
+ // 이름에 언어가 적혀 있는데(예: 'Osaka Kobe (Night)(한)') 그 언어 줄이 없다.
+ // 여기서 첫 줄로 흘러가면 영어 상품이 열린다 (2026-09-03 실제 사고).
+ // 엉뚱한 것을 여느니 열지 않는다 — 사람이 손으로 연다.
+ window.__langNotFound = true;
+ return null;
  } else {
  // FALLBACK: 점수 매칭 0개 — 원본 isAdultText 통과 라벨 중 첫 번째 사용.
- // 새 UI / 매칭 못 한 케이스에서도 봇이 진행하도록 보장 (점수 무시).
- // labels 는 이미 y 오름차순 정렬되어 있어 화면 상단의 영어 Adult 가 첫 번째.
+ // 언어를 안 적은(기본=영어) 경우에만 쓴다. 새 UI / 매칭 못 한 케이스에서도
+ // 봇이 진행하도록 보장 (점수 무시). labels 는 y 오름차순이라 첫 번째가 상단.
  window.__scoringDebug.usedFallback = true;
  // labels 그대로 유지 (점수 무관)
  }
@@ -4479,11 +4491,12 @@ def click_activity_adult_inventory_item(page, target_language=None):
     try:
         sec = _parse_section_target(target_language or '')
         page.evaluate(
-            "(args) => { window.__targetLangAliases = args.aliases; window.__targetVariantTokens = args.tokens; window.__targetBaseTokens = args.baseTokens; }",
+            "(args) => { window.__targetLangAliases = args.aliases; window.__targetVariantTokens = args.tokens; window.__targetBaseTokens = args.baseTokens; window.__targetLangExplicit = !!args.explicit; }",
             {
                 "aliases": sec['language']['aliases'],
                 "tokens": sec['variant_tokens'],
                 "baseTokens": sec.get('base_tokens', []),
+                "explicit": bool(sec['language'].get('explicit')),
             }
         )
         if sec['variant_tokens']:
@@ -4498,6 +4511,7 @@ def click_activity_adult_inventory_item(page, target_language=None):
     try:
         sec = _parse_section_target(target_language or '')
         lang_aliases = sec['language']['aliases']
+        lang_explicit = bool(sec['language'].get('explicit'))
         variant_tokens = sec['variant_tokens']
         base_tokens = sec.get('base_tokens', [])
         # 페이지 top 으로 이동 (See schedule 보이도록)
@@ -4507,7 +4521,7 @@ def click_activity_adult_inventory_item(page, target_language=None):
         except Exception:
             pass
         simple_result = page.evaluate(
-            "([langAliases, variantTokens, baseTokens]) => {\n"
+            "([langAliases, variantTokens, baseTokens, langExplicit]) => {\n"
             " function norm(s){return (s||'').replace(/\\s+/g,' ').trim();}\n"
             " function visible(el){const r=el.getBoundingClientRect();const st=getComputedStyle(el);return st.display!=='none'&&st.visibility!=='hidden'&&Number(st.opacity)!==0&&r.width>0&&r.height>0;}\n"
             " const btns = Array.from(document.querySelectorAll('button,a,[role=button]')).filter(el=>visible(el)&&/See\\s*schedule/i.test(norm(el.innerText||el.textContent||'')));\n"
@@ -4550,12 +4564,14 @@ def click_activity_adult_inventory_item(page, target_language=None):
             " }).filter(s=>s.score>0);\n"
             " scored.sort((a,b)=>b.score-a.score);\n"
             " if (!scored.length){\n"
+            # 이름에 언어가 적혀 있으면 첫 줄(영어)로 흘러가지 않는다
+            "  if (langExplicit) return {ok:false, reason:'lang_not_found'};\n"
             "  btns[0].scrollIntoView({block:'center'}); btns[0].click(); return {ok:true, fallback:'first', header:'(no match)', clicked:'first See schedule'};\n"
             " }\n"
             " const best = scored[0]; best.btn.scrollIntoView({block:'center'}); best.btn.click();\n"
             " return {ok:true, header:best.header, score:best.score, candidates:scored.length};\n"
             "}",
-            [lang_aliases, variant_tokens, base_tokens]
+            [lang_aliases, variant_tokens, base_tokens, lang_explicit]
         )
         if simple_result and simple_result.get('ok'):
             _v(f"[진행] See schedule 직접 클릭: header='{simple_result.get('header')}', score={simple_result.get('score')}")
@@ -4620,10 +4636,11 @@ def click_activity_adult_inventory_item(page, target_language=None):
         try:
             sec = _parse_section_target(target_language or '')
             lang_aliases = sec['language']['aliases']
+            lang_explicit = bool(sec['language'].get('explicit'))
             variant_tokens = sec['variant_tokens']
             base_tokens = sec.get('base_tokens', [])
             simple_result = page.evaluate(
-                "([langAliases, variantTokens, baseTokens]) => {\n"
+                "([langAliases, variantTokens, baseTokens, langExplicit]) => {\n"
                 " function norm(s){return (s||'').replace(/\\s+/g,' ').trim();}\n"
                 " function visible(el){const r=el.getBoundingClientRect();const st=getComputedStyle(el);return st.display!=='none'&&st.visibility!=='hidden'&&Number(st.opacity)!==0&&r.width>0&&r.height>0;}\n"
                 " const btns = Array.from(document.querySelectorAll('button,a,[role=button]')).filter(el=>visible(el)&&/See\\s*schedule/i.test(norm(el.innerText||el.textContent||'')));\n"
@@ -4670,13 +4687,14 @@ def click_activity_adult_inventory_item(page, target_language=None):
                 " }).filter(s=>s.score>0);\n"
                 " scored.sort((a,b)=>b.score-a.score);\n"
                 " if (!scored.length){\n"
+                "  if (langExplicit) return {ok:false, reason:'lang_not_found'};\n"
                 "  // 정말 매칭 안 됨 → 첫 번째 See schedule 무조건 클릭\n"
                 "  btns[0].scrollIntoView({block:'center'}); btns[0].click(); return {ok:true, fallback:'first', clicked:'first See schedule'};\n"
                 " }\n"
                 " const best = scored[0]; best.btn.scrollIntoView({block:'center'}); best.btn.click();\n"
                 " return {ok:true, header:best.header, score:Math.round(best.score)};\n"
                 "}",
-                [lang_aliases, variant_tokens, base_tokens]
+                [lang_aliases, variant_tokens, base_tokens, lang_explicit]
             )
             print(f"[안내] See schedule fallback 결과: {simple_result}")
             if simple_result and simple_result.get('ok'):

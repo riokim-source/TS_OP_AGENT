@@ -42,19 +42,20 @@ def ambiguous_names() -> dict:
     """
     구분이 안 되는 상품 이름 -> 사유.
 
-    ⚠️ packages.py 에서 언어 변형이 기본 상품과 **같은 번호**를 쓰는 것들이 있다.
-       'activity' 방식 상품이 그렇다. 두 항목이 글자 하나까지 똑같아서 봇이
-       한국어와 영어를 구분할 방법이 없고, 결국 기본(영어) 상품이 열린다.
+    ⚠️ 'activity' 방식은 **더 이상 막지 않는다** (2026-09-27).
+       Klook 새 UI 는 한 Activity 안에 언어별 줄(unit)이 따로 있다.
 
-           Osaka Kobe (Night)     id=216946 activity
-           Osaka Kobe (Night)(한) id=216946 activity   <- 완전히 같다
+           1 English · Adult   ID 828952387910
+           2 Korean  · Adult   ID 828952387912   <- '(한)' 은 여기로 들어간다
 
-       2026-09-03: 'Osaka Kobe (Night)(한) 6' 을 열라고 했는데 영어 상품이
-       6자리 열렸다. 한국어 상품은 닫힌 채로 남았다. 19개 이름이 이 상태다.
-       ('package' 방식은 언어별로 번호가 따로 있어 정상이다)
+       봇이 그 줄을 골라서 연다 (klook_worker._parse_section_target →
+       window.__targetLangExplicit). 그 언어 줄을 못 찾으면 **첫 줄로
+       흘러가지 않고 실패**한다. 그래서 '엉뚱한 상품이 열리는' 일은 없다.
+       (2026-09-03 사고는 그때 못 찾으면 첫 줄을 누르던 것 때문이었다)
 
-    번호를 알아내 packages.py 를 고치기 전까지는, 엉뚱한 상품을 여는 대신
-    **열지 않고 사람에게 넘긴다.** 잘못 여는 쪽이 훨씬 비싸다.
+    ⚠️ 'package' 방식은 다르다. 그쪽은 번호 자체가 언어별로 따로 있어야 하는데
+       같은 번호를 쓴다면 맵핑이 잘못된 것이다. 그건 그대로 막는다 —
+       봇이 화면에서 가를 방법이 없다.
     """
     pk = _packages_map()
     if not pk:
@@ -64,16 +65,16 @@ def ambiguous_names() -> dict:
         by_id.setdefault((str(v.get("id")), v.get("workflow")), []).append(name)
     out: dict = {}
     for (pid, wf), names in by_id.items():
-        if len(names) < 2:
-            continue
+        if len(names) < 2 or wf != "package":
+            continue                       # activity 는 화면에서 언어 줄로 가른다
         plain = [n for n in names if not n.endswith(_LANG_SUFFIX)]
         if not plain:
             continue                       # 변형끼리만 있으면 기본이 없다는 뜻
         for n in names:
             if n.endswith(_LANG_SUFFIX):
-                out[n] = (f"'{n}' 과 '{plain[0]}' 이 Klook 번호 {pid} 로 같아서 "
-                          f"구분할 수 없습니다. 그대로 열면 '{plain[0]}' 이 열립니다. "
-                          f"Klook 에서 직접 열어 주세요.")
+                out[n] = (f"'{n}' 과 '{plain[0]}' 이 Klook 패키지 번호 {pid} 로 "
+                          f"같습니다. 구버전 UI 는 번호가 언어별로 따로 있어야 하니 "
+                          f"맵핑이 잘못된 것입니다. 번호를 고치기 전에는 열지 않습니다.")
     return out
 
 
