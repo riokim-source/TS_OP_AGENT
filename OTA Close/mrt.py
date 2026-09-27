@@ -1977,6 +1977,23 @@ def _pick_open_cells(cells: list, course=None) -> tuple:
     return cells, " / ".join(notes)
 
 
+def nothing_to_sell(cells: list, total: int, split: bool) -> bool:
+    """
+    마감인데 그 날짜 칸이 전부 비어 있거나 0 인가 = 그날 팔 것이 없는가.
+
+    ⚠️ **읽을 수 있었을 때만** 참이다. 한 칸이라도 값을 못 읽었으면 '모른다' 이고,
+       모르는 것은 '팔 게 없다' 가 아니다 (열린 재고가 조용히 남는다).
+    ⚠️ 오픈(split=True)이나 수량이 있는 경우에는 쓰지 않는다.
+    """
+    if split or int(total) != 0 or not cells:
+        return False
+    for c in cells:
+        v = c.get("value")
+        if v is None or str(v) not in ("", "0"):
+            return False
+    return True
+
+
 def set_target_date_inventory(page: Page, total: int = 0, split: bool = False,
                               course=None):
     """
@@ -2133,6 +2150,21 @@ def set_target_date_inventory(page: Page, total: int = 0, split: bool = False,
     print(f"[진행] 총 {total_cells} 개 셀 입력 시작 (target weekday idx={target_cal_idx}, "
           f"목표={targets})")
 
+    # ⚠️ 마감인데 그 날짜 칸이 전부 비어 있거나 0 이면, 그날 팔 것이 없는 것이다.
+    #    (아직 판매 시작 안 한 상품 / 그 날짜만 운영 안 하는 상품)
+    #    예전에는 그래도 0 을 써 넣으려다 한 칸에서 타임아웃이 나면 '부분 마감'
+    #    실패로 올라갔다 (3890255 / 4843937 가 매일 그랬다. 2026-09-27 로그에서
+    #    value='' 인 것이 확인됐다).
+    #    ⚠️ 빈칸·0 이라고 **읽을 수 있었을 때만** 이렇게 판정한다. 못 읽은 칸이
+    #       하나라도 있으면 그건 '모른다' 이지 '팔 게 없다' 가 아니다.
+    if nothing_to_sell(cells, total, split):
+        raws = [c.get("value") for c in cells]
+        if True:
+            shown = ", ".join(repr(str(r)) for r in raws[:6])
+            print(f"[판정] {target_date_label()} 칸 {total_cells}개가 전부 빈칸/0 "
+                  f"({shown}) → 그날 팔 것이 없습니다 (판매중 아님)")
+            return total_cells, total_cells, "not_on_sale"
+
     for idx, cell in enumerate(cells, start=1):
         want = str(targets[idx - 1])
         tag = cell.get("tag")
@@ -2283,7 +2315,7 @@ def set_target_date_inventory(page: Page, total: int = 0, split: bool = False,
         print(f"[완료] 인원 입력: {ok_cells}/{total_cells}개 (미완 {len(remaining_final)}개)")
     else:
         print(f"[완료] 인원 입력 완료: {ok_cells}/{total_cells}개 목표={targets}")
-    return ok_cells, total_cells
+    return ok_cells, total_cells, ""
 
 
 def read_cell_values(page, names: list) -> dict:
@@ -2810,7 +2842,20 @@ def process_product(page: Page, product_id: str) -> Dict[str, object]:
         goto_inventory_management(page)
         # 편집 모드 활성화: "예약 인원 수정" 버튼을 누르면 input disabled 해제됨
         enable_inventory_edit_mode(page)
-        changed, _total_cells = set_target_date_inventory_zero(page)
+        changed, _total_cells, _state = set_target_date_inventory_zero(page)
+        if _state == "not_on_sale":
+            # 그날 팔 것이 없다. 저장할 것도 없다.
+            click_exit(page)
+            _elapsed = time.perf_counter() - product_started_at
+            return {
+                "product_id": product_id,
+                "target_date": target_date_label(),
+                "result": "스킵",
+                "memo": (f"{target_date_label()} 에 판매 수량이 없습니다 "
+                         f"(칸 {_total_cells}개 전부 빈칸/0) - 판매중 아님"),
+                "elapsed_seconds": round(_elapsed, 2),
+                "elapsed_time": format_duration(_elapsed),
+            }
         saved_ok = click_save_inventory(page)
         click_exit(page)
 
@@ -3192,7 +3237,14 @@ def _mrt_close_one_product(page, product_id: str, dry_run: bool):
             return {"product_id": product_id, "result": "실패",
                     "memo": "판매중 상품 편집모드 진입 실패(버튼 있음, 활성화 실패) - 수동 확인 필요",
                     "elapsed_seconds": round(time.perf_counter() - started_at, 2)}
-        ok_cells, total_cells = set_target_date_inventory_zero(page)
+        ok_cells, total_cells, state = set_target_date_inventory_zero(page)
+        if state == "not_on_sale":
+            # 저장할 것이 없다. 저장을 누르지 않고 나간다.
+            click_exit(page)
+            return {"product_id": product_id, "result": "스킵",
+                    "memo": (f"{target_date_label()} 에 판매 수량이 없습니다 "
+                             f"(칸 {total_cells}개 전부 빈칸/0) - 판매중 아님"),
+                    "elapsed_seconds": round(time.perf_counter() - started_at, 2)}
         saved_ok = click_save_inventory(page)
         click_exit(page)
         if not saved_ok:
@@ -3255,7 +3307,7 @@ def _mrt_open_one_product(page, product_id: str, qty: int, dry_run: bool, course
                     "memo": "판매중인데 편집모드 진입 실패 - 수동 확인 필요",
                     "elapsed_seconds": round(time.perf_counter() - started_at, 2)}
 
-        ok_cells, total_cells = set_target_date_inventory(page, total=qty, split=True,
+        ok_cells, total_cells, _state = set_target_date_inventory(page, total=qty, split=True,
                                                           course=course)
         saved_ok = click_save_inventory(page)
         click_exit(page)

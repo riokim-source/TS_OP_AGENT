@@ -786,6 +786,22 @@ def _process_one_product(page: Page, target: date, dry_run: bool, p: dict, max_w
         return {"status": "fail", "reason": f"exception:{e}", "result": ""}
 
 
+def keep_not_operating(prev_reason: str, new_reason: str) -> bool:
+    """
+    2차가 판단 불가로 끝났을 때, 1차의 '그날 운영 안 함' 판정을 살릴 것인가.
+
+    no_slots 는 근거가 있는 판정이다 — 다음날·다다음날 헤더는 보이는데 대상
+    날짜만 없다는 뜻이다. 판단 불가(opts_incomplete / apply_failed /
+    checkbox_missing)가 그걸 뒤집게 두면, 그날 아예 운영하지 않는 상품이
+    매일 '실패' 로 올라온다 (2026-09-27 48881P93).
+
+    ⚠️ no_section 은 아니다. 그건 '아무 헤더도 안 그려졌다' 라서 그 자체가
+       판단 불가다. 근거가 없는 쪽을 살리면 열린 재고를 놓친다.
+    """
+    return (prev_reason == "no_slots"
+            and new_reason in ("opts_incomplete", "apply_failed", "checkbox_missing"))
+
+
 def _say_result(code: str, label: str, status: str, reason: str,
                 retry: bool = False) -> None:
     """hub 결과표에 남길 한 줄. 로그와 별개로 표시를 붙여 내보낸다."""
@@ -1340,13 +1356,24 @@ def run_close_workers(target_date: Optional[date], dry_run: bool,
                         _saved[prev_reason] = _saved.get(prev_reason, 0) + 1
                         LOG.info("[q%s] (재시도 %d/%d) %s | %s | 회복 → CLOSE (이미 마감)",
                                  quarter, ri, len(retry_targets), p["code"], _label_short)
+                    elif keep_not_operating(prev_reason, res.get("reason") or ""):
+                        # 1차에서 **운영X 를 확정**해 놓고(다음날·다다음날 헤더는
+                        # 보이는데 대상 날짜만 없음), 2차가 판단 불가로 끝난 경우다.
+                        # 판단 불가가 확정된 판정을 뒤집게 두면, 그날 아예 운영하지
+                        # 않는 상품이 매일 '실패' 로 올라온다 (2026-09-27 48881P93).
+                        # 근거가 있는 쪽을 남긴다 — 그날 팔 것이 없으므로 스킵이다.
+                        LOG.info("[q%s] (재시도 %d/%d) %s | %s | 2차는 판단 불가(%s)지만 "
+                                 "1차에서 그날 운영 안 함이 확인됨 → 판매중 아님(스킵)",
+                                 quarter, ri, len(retry_targets), p["code"], _label_short,
+                                 res.get("reason"))
                     elif res.get("reason") in ("opts_incomplete", "apply_failed",
                                                "checkbox_missing"):
                         # 재시도(15초 대기) 후에도 '판단할 수 없음'.
                         # 조용히 넘기지 말고 '실패'로 표면화(열려있는데 위장 마감 방지).
                         #
-                        # ⚠️ no_section / no_slots 와는 다르다. 그건 '봤는데 없더라'
-                        #    (= 그날 안 파는 상품) 이고, 이건 '보지도 못했다' 이다.
+                        # ⚠️ no_section 과는 다르다. no_section 은 '아무 헤더도 안
+                        #    그려졌다' 라서 그 자체가 판단 불가다. no_slots 만
+                        #    '봤는데 그날이 없더라' 로 근거가 된다 (위 가지).
                         #    모르는 것을 괜찮다고 보고하면 열린 재고가 그대로 남는다.
                         #    (2026-09-09: 48881P245 가 apply_failed 인데 스킵으로
                         #     묻혀서, 마감 결과에는 실패가 한 줄도 안 남았다)
