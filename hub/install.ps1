@@ -30,14 +30,17 @@ foreach ($c in @("python", "py")) {
 }
 if (-not $py) {
     Bad "Python 이 없습니다."
-    Line "       https://www.python.org/downloads/ 에서 3.10 이상을 설치하세요."
+    Line "       https://www.python.org/downloads/ 에서 3.11 이상을 설치하세요."
     Line "       설치할 때 'Add python.exe to PATH' 를 반드시 체크하세요."
     exit 1
 }
 $ver = & $py -c "import sys; print('%d.%d' % sys.version_info[:2])"
 $major, $minor = $ver.Split('.')
-if ([int]$major -lt 3 -or ([int]$major -eq 3 -and [int]$minor -lt 10)) {
-    Bad "Python $ver 은 너무 낮습니다. 3.10 이상이 필요합니다."
+# ⚠️ 3.11 이상. pandas 3 이 3.11 부터라서, 3.10 에서는 pip 가 조용히 옛 pandas
+#    (2.x) 를 깔아 준다. 그러면 그 PC 만 다른 계산을 하게 된다.
+if ([int]$major -lt 3 -or ([int]$major -eq 3 -and [int]$minor -lt 11)) {
+    Bad "Python $ver 은 너무 낮습니다. 3.11 이상이 필요합니다."
+    Line "       (pandas 3 이 3.11 부터입니다. 낮으면 옛 버전이 깔려 계산이 달라집니다)"
     exit 1
 }
 Ok "Python $ver"
