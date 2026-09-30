@@ -97,21 +97,51 @@ def aria_label_for(d: date) -> str:
 # ============================================================
 # 1. 날짜 picker
 # ============================================================
-def open_date_picker(page: Page) -> None:
-    page.evaluate("window.scrollTo(0, 0)")
-    picker = page.evaluate_handle(
-        """() => Array.from(document.querySelectorAll('input'))
+def open_date_picker(page: Page, wait_s: float = 20.0) -> None:
+    """
+    날짜 입력칸('October 1, 2026' 모양) 을 눌러 캘린더를 연다.
+
+    ⚠️ 한 번 보고 없다고 끝내면 안 된다. run_open 은 이 예외를 그대로 위로
+       던지므로 VI 오픈이 **통째로** 죽는다 — 2026-09-27 과 09-30 오픈이
+       '결과가 하나도 없습니다 / Date picker input 을 찾지 못했습니다' 로
+       끝났고, 같은 날 마감은 멀쩡했다. 상품 문제가 아니라 화면이 그때
+       아직 안 그려진 것이다.
+
+       그래서 있을 때까지 기다리고, 그래도 없으면 **무엇이 떠 있었는지**
+       남긴다 (로그인 화면인지, 다른 페이지인지 알 수 없으면 다음날도 똑같다).
+    """
+    find = """() => Array.from(document.querySelectorAll('input'))
             .find(i => {
                 const r = i.getBoundingClientRect();
                 return r.width > 0 && r.height > 0 &&
                        /\\b\\w+ \\d+, \\d{4}\\b/.test(i.value || '');
             })"""
-    )
-    el = picker.as_element()
-    if el is None:
-        raise RuntimeError("Date picker input 을 찾지 못했습니다")
-    el.click()
-    page.wait_for_timeout(700)
+    deadline = time.time() + max(1.0, wait_s)
+    while True:
+        page.evaluate("window.scrollTo(0, 0)")
+        el = page.evaluate_handle(find).as_element()
+        if el is not None:
+            el.click()
+            page.wait_for_timeout(700)
+            return
+        if time.time() >= deadline:
+            break
+        page.wait_for_timeout(700)
+
+    url, body, values = "?", "?", []
+    try:
+        url = page.url or "?"
+        values = page.evaluate(
+            """() => Array.from(document.querySelectorAll('input')).slice(0, 12)
+                .map(i => String(i.value || i.placeholder || '').slice(0, 40))"""
+        ) or []
+        body = " ".join(str(page.evaluate(
+            "() => document.body ? document.body.innerText : ''") or "").split())[:200]
+    except Exception:
+        pass
+    LOG.error("Date picker 못 찾음 | url=%s | 입력칸=%s | 화면=%s", url, values, body)
+    raise RuntimeError(f"Date picker input 을 찾지 못했습니다 "
+                       f"({int(wait_s)}초 기다림 / url={url[:70]} / 입력칸={values[:6]})")
 
 
 def pick_date(page: Page, target: date) -> None:
@@ -561,6 +591,14 @@ def apply_filter(page: Page) -> bool:
         except Exception as e2:
             if _dropdown_closed(page):
                 LOG.info("fallback 중 드롭다운이 닫힘 — 적용된 것으로 봅니다")
+                return True
+            # ⚠️ 마지막으로 한 번 더 '상태' 를 본다. 클릭은 타임아웃으로 끝났어도
+            #    사이트가 조금 늦게 닫는 경우가 있다. 누른 결과로 판단한다.
+            #    (2026-09-25·09-29 마감에서 이 사유로 VI 가 실패로 남았다)
+            page.wait_for_timeout(1500)
+            if _dropdown_closed(page):
+                LOG.info("Apply 클릭은 타임아웃이었지만 드롭다운이 닫혔습니다 "
+                         "— 적용된 것으로 봅니다")
                 return True
             LOG.error("Apply 클릭 최종 실패: %s", e2)
             return False
@@ -1029,22 +1067,37 @@ def _vi_get_or_create_tab(context, force_new: bool = False) -> Page:
     return new_page
 
 
-def _vi_navigate_and_pick(page: Page, target: date) -> None:
-    """페이지 로드 + 날짜 선택 (재시도 포함)."""
-    page.goto(AVAILABILITY_URL, wait_until="domcontentloaded")
-    try:
-        page.wait_for_load_state("networkidle", timeout=30_000)
-    except PWTimeoutError:
-        pass
-    page.wait_for_timeout(1500)
-    try:
-        pick_date(page, target)
-    except Exception as e:
-        LOG.warning("날짜 선택 1차 실패: %s. 재시도.", e)
-        pick_date(page, target)
-    if not verify_picker_value(page, target):
-        LOG.warning("picker 값 불일치 - 재시도")
-        pick_date(page, target)
+def _vi_navigate_and_pick(page: Page, target: date, tries: int = 3) -> None:
+    """
+    페이지 로드 + 날짜 선택.
+
+    ⚠️ 옛 코드는 실패하면 **같은 화면에서** pick_date 를 한 번 더 불렀다.
+       화면이 안 떠 있는 것이 원인이면 두 번 다 같은 자리에서 죽는다
+       (2026-09-27·09-30 오픈이 그랬다). 다시 할 때는 **페이지부터** 다시
+       불러온다.
+    """
+    last = None
+    for attempt in range(1, max(1, tries) + 1):
+        if attempt > 1:
+            LOG.warning("페이지를 다시 불러온 뒤 날짜 선택 재시도 (%d/%d)", attempt, tries)
+        page.goto(AVAILABILITY_URL, wait_until="domcontentloaded")
+        try:
+            page.wait_for_load_state("networkidle", timeout=30_000)
+        except PWTimeoutError:
+            pass
+        page.wait_for_timeout(1500)
+        try:
+            pick_date(page, target)
+        except Exception as e:
+            last = e
+            LOG.warning("날짜 선택 실패 (%d/%d): %s", attempt, tries, e)
+            continue
+        if verify_picker_value(page, target):
+            return
+        last = RuntimeError("picker 값이 대상 날짜와 다릅니다")
+        LOG.warning("picker 값 불일치 (%d/%d)", attempt, tries)
+    if last is not None:
+        raise last
 
 
 # ============================================================

@@ -449,6 +449,40 @@ def cdp_tabs(port: int, timeout: float = 2.0) -> list[dict]:
         return []
 
 
+def close_tab(port: int, target_id: str, wait: float = 8.0) -> bool:
+    """
+    탭을 닫고, **목록에서 사라지는 것까지** 확인한다. 사라졌으면 True.
+
+    ⚠️ /json/close 는 '닫으라고 시키는' 것이지 닫혔다는 뜻이 아니다. 무거운
+       SPA(Klook merchant 가 특히 그렇다) 는 몇 초 뒤에 사라지고, 드물게 아예
+       남는다. 그 반쯤 닫힌 탭 하나가 남으면 Playwright 의 connect_over_cdp 가
+       <ws connected> 까지 가서 거기서 30초를 다 쓰고 실패한다.
+
+       2026-09-30 오픈: 로그인 확인이 끝난 30초 뒤 KR(9522) 이 이렇게 막혀
+       Klook 한국 15건이 통째로 날아갔다. 같은 날 마감에서는 GG KOREA·KKday
+       가 같은 자리에서 죽었다. 로그인 확인은 '읽기만' 하는 일인데, 그 탭이
+       뒤에 남아서 실행 전체를 막았다.
+    """
+    def ask() -> None:
+        try:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/json/close/{target_id}", timeout=4).close()
+        except Exception:
+            pass
+
+    ask()
+    deadline = time.time() + max(0.5, wait)
+    asked_again = False
+    while time.time() < deadline:
+        time.sleep(0.4)
+        if not any(t.get("id") == target_id for t in cdp_tabs(port)):
+            return True
+        if not asked_again and time.time() > deadline - wait / 2:
+            asked_again = True
+            ask()
+    return not any(t.get("id") == target_id for t in cdp_tabs(port))
+
+
 class Routing:
     def __init__(self, config_path: Path | None = None):
         self.config_path = Path(config_path or CONFIG_PATH)
@@ -768,12 +802,8 @@ class Routing:
                 if stable >= 2:
                     break
         finally:
-            if target_id:
-                try:
-                    urllib.request.urlopen(
-                        f"http://127.0.0.1:{port}/json/close/{target_id}", timeout=4).close()
-                except Exception:
-                    pass
+            # 열었던 탭은 '사라진 것까지' 확인하고 넘어간다 (close_tab 주석 참고).
+            tab_left = bool(target_id) and not close_tab(port, target_id)
 
         expect = meta.get("expect") or ""
         if not final_url or final_url.startswith("about:"):
@@ -786,7 +816,10 @@ class Routing:
             state = "logged_out"
         else:
             state = "logged_in"
-        return {"channel": channel, "state": state, "url": final_url[:160]}
+        out = {"channel": channel, "state": state, "url": final_url[:160]}
+        if tab_left:
+            out["tab_left"] = True
+        return out
 
     def status_all(self) -> list[dict]:
         """프로필 상태 병렬 조회 (포트 프로브 + 프로세스 조회가 직렬이면 10초 넘어간다)."""

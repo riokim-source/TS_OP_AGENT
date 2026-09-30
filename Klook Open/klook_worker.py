@@ -1138,6 +1138,7 @@ def open_package_detail(page, package_id):
     # ⚠️ 왜 못 갔는지 남긴다. 지금까지는 이 문장 하나뿐이라 며칠을 헤맸다.
     #    href 가 있었는지, 어디로 갔는지, 화면에 뭐가 있는지가 있어야
     #    'Klook 이 튕겨냈다' 와 '아직 안 그려졌다' 를 가를 수 있다.
+    bounced = False
     try:
         now = page.url
         body = (get_body_text(page, 2000) or "").replace("\n", " ")[:200]
@@ -1150,6 +1151,19 @@ def open_package_detail(page, package_id):
     except Exception as diag_error:
         print(f"[진단] 상태를 읽지 못함: {diag_error}")
 
+    # ⚠️ '줄을 못 찾았다' 와 '눌렀는데 Klook 이 목록으로 되돌렸다' 는 다른 일이다.
+    #
+    #    2026-09-29 11:12 실행에서 부산·경주 6건이 연달아 이렇게 끝났다.
+    #    href 는 멀쩡했고(act/package/info/3298?...&package_id=299440), 같은
+    #    상품이 46분 전 실행에서는 열렸다. 즉 번호가 바뀐 것도, 화면이 바뀐
+    #    것도 아니고 그 순간 Klook 이 상세 화면을 안 내준 것이다.
+    #    (같은 실행 앞부분 10건은 전부 성공했다)
+    #
+    #    이 표시가 메모에 남으면 '맵핑을 고쳐야 하나' 를 헷갈리지 않는다.
+    #    그리고 process_task 가 이걸 보고 **더 기다린 뒤** 다시 해 본다.
+    if bounced:
+        raise Exception(f"'{package_id} -' 줄을 눌렀지만 Klook 이 목록으로 되돌렸습니다 "
+                        f"(번호는 찾았고 상세 화면만 안 열렸습니다).")
     raise Exception(f"'{package_id} -' Package 링크 클릭 후에도 상세 화면으로 이동하지 못했습니다.")
 
 def dismiss_unsaved_changes_dialog(page, max_tries: int = 2) -> bool:
@@ -1639,6 +1653,9 @@ def open_tomorrow_edit_schedule(page):
         _v("[안내] 이미 Edit schedule 팝업이 열려 있습니다.")
         return
 
+    # 왜 못 눌렀는지 (그 날짜 칸이 없다 / 칸에 연필이 없다) 를 마지막 사유에 쓴다
+    notes: dict = {}
+
     def center_target_day_card():
         """익일 날짜 카드/컬럼을 화면 중앙으로 가져오고 카드 좌표를 반환합니다."""
         try:
@@ -1774,7 +1791,7 @@ def open_tomorrow_edit_schedule(page):
         try:
             target_day_str = str(target_day)
             target_iso_str = tomorrow_iso()
-            clicked = bool(page.evaluate(
+            clicked = page.evaluate(
                 """([day, iso, card]) => {
  function norm(s) { return (s || '').replace(/\\s+/g, ' ').trim(); }
  function isOutdate(item) {
@@ -1856,8 +1873,21 @@ def open_tomorrow_edit_schedule(page):
  return {ok:true, canEdit, iconCls: (editIcon.className || '').toString(), ds: slotDs};
  }""",
                 [target_day_str, target_iso_str, card],
-            ))
-            if not clicked:
+            )
+            # ⚠️ 이 JS 는 실패를 {ok:false, reason:...} 로 돌려준다. 빈 dict 가
+            #    아니니 bool() 은 늘 True — 그래서 여태 '못 눌렀다' 를 '눌렀다'
+            #    로 보고 4.5초를 기다린 뒤 "팝업을 확인하지 못했습니다" 라는
+            #    엉뚱한 사유만 남겼다. 진짜 사유(그 날짜 칸이 없다 / 칸에
+            #    연필이 없다)는 버려졌다.
+            #    (2026-09-29·09-30 수원화성·경주가 이 사유로 3일 연속 실패)
+            if isinstance(clicked, dict):
+                if not clicked.get("ok"):
+                    notes["reason"] = str(clicked.get("reason") or "")
+                    _v(f"[진행] 날짜 카드 Edit 를 못 눌렀습니다: {notes['reason']}")
+                    return False
+                notes["reason"] = ""
+                notes["canEdit"] = clicked.get("canEdit")
+            elif not clicked:
                 return False
             _v(f"[진행] 날짜 카드 안 .anticon-edit 클릭 ()")
         except Exception as e:
@@ -1939,7 +1969,22 @@ def open_tomorrow_edit_schedule(page):
     if click_edit_if_visible(None):
         return
 
-    raise Exception("Edit schedule 팝업을 확인하지 못했습니다.")
+    # ⚠️ 여기서 '팝업을 확인하지 못했습니다' 한 줄로 끝내면 세 가지가 섞인다.
+    #      (1) 캘린더에 그 날짜 칸이 아예 없다   -> 그 날짜 스케줄이 없는 상품
+    #      (2) 칸은 있는데 연필(Edit) 이 없다     -> 그 날짜는 손댈 수 없는 칸
+    #      (3) 화면이 늦게 떴다                  -> 다시 하면 되는 것
+    #    (1)(2) 는 봇이 아무리 다시 해도 안 열린다. 사람이 Klook 에서 그 날짜에
+    #    스케줄이 있는지 봐야 한다. 그걸 메모로 말해 준다.
+    why = str(notes.get("reason") or "")
+    day_label = f"{tomorrow_iso()} ({target_day}일)"
+    if "no .calendar-table-item" in why:
+        raise Exception(f"캘린더에 {day_label} 칸이 없습니다 — 그 날짜에 스케줄이 "
+                        f"없는 상품입니다. Klook 에서 그 날짜 판매 여부를 확인하세요.")
+    if "no .anticon-edit" in why:
+        raise Exception(f"{day_label} 칸에 Edit(연필) 이 없습니다 — 그 칸은 수량을 "
+                        f"고칠 수 없는 상태입니다. Klook 에서 그 날짜 스케줄을 확인하세요.")
+    raise Exception("Edit schedule 팝업을 확인하지 못했습니다."
+                    + (f" (사유: {why})" if why else ""))
 
 def fill_inventory_in_popup(page, inventory):
     """
@@ -4280,7 +4325,7 @@ def click_activity_adult_inventory_item(page, target_language=None):
  for (const el of all) {
  const raw = (el.innerText || el.textContent || '');
  if (!raw) continue;
- const firstLine = raw.split('\n')[0].trim();
+ const firstLine = raw.split('\\n')[0].trim();
  if (!firstLine || firstLine.length > 120) continue;
  const lower = firstLine.toLowerCase();
  // row 라벨 패턴만 제외 (헤더에 'per person' 같은 단어가 본문으로 포함될 수 있음):
@@ -4385,7 +4430,7 @@ def click_activity_adult_inventory_item(page, target_language=None):
 
  // 매칭 대상 텍스트: row 자체 + (있으면) 조상 section header line
  // 조상 헤더에 'English · Winery Experience Only' 같은 variant 정보가 있어서 row 텍스트가
- // 'Adult\nStatus: ...' 만 있어도 옵션 매칭 가능.
+ // 'Adult (줄바꿈) Status: ...' 만 있어도 옵션 매칭 가능.
  const matchSourceParts = ancestorLine
  ? ancestorLine.split(/[·\-]/).map(p => p.trim()).filter(p => p)
  : parts;
@@ -5291,6 +5336,9 @@ _RETRYABLE_STEPS = (
     "Published 패키지 선택", "Inventory schedule 진입",
 )
 
+# 'Klook 이 목록으로 되돌렸다' 는 표시 (open_package_detail_smart 가 남긴다)
+_BOUNCE_MARK = "목록으로 되돌렸습니다"
+
 
 def process_task(page, task, attempt: int = 1):
     """한 상품을 처리. 출력 정책:
@@ -5416,11 +5464,20 @@ def process_task(page, task, attempt: int = 1):
             #    그 상품은 그날 안 열렸다.
             #
             #    재고를 건드리기 전 단계만 다시 한다. Confirm 이후는 손대지 않는다.
-            if attempt == 1 and any(f"[단계 실패: {st}]" in str(e) for st in _RETRYABLE_STEPS):
-                print(f"[재시도] {name} / {package_id} — 화면 이동 단계라 한 번 더 합니다")
-                page.wait_for_timeout(1500)
+            #    ⚠️ 'Klook 이 목록으로 되돌렸다' 는 1.5초 뒤에 다시 해도 똑같다.
+            #       2026-09-29 실행이 그랬다 — 여섯 상품이 두 번씩(바로 뒤에)
+            #       같은 자리에서 끝났다. 그쪽은 **더 오래 기다리고 한 번 더**
+            #       본다 (8초 → 16초). 재고는 아직 건드리지 않은 단계다.
+            retryable = any(f"[단계 실패: {st}]" in str(e) for st in _RETRYABLE_STEPS)
+            bounced = _BOUNCE_MARK in str(e)
+            limit = 3 if bounced else 2
+            if attempt < limit and retryable:
+                wait_ms = 8000 * attempt if bounced else 1500
+                print(f"[재시도] {name} / {package_id} — 화면 이동 단계라 "
+                      f"{wait_ms // 1000}초 기다린 뒤 한 번 더 합니다")
+                page.wait_for_timeout(wait_ms)
                 try:
-                    return process_task(page, task, attempt=2)
+                    return process_task(page, task, attempt=attempt + 1)
                 except Exception as retry_error:
                     print(f"[오류] {name} / {package_id}: 재시도도 실패 — {retry_error}")
             return {

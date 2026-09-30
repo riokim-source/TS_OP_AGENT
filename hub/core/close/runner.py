@@ -192,7 +192,7 @@ def check_logins(job, r, profiles: dict) -> list[str]:
             res = r.check_login(key, profiles[key]["channels"], timeout=12)
         except Exception as e:
             job.log("SYS", f"[주의] {key} 로그인 확인 실패: {e}")
-            continue
+            res = {}          # 확인을 못 했어도 아래 'CDP 다시 보기' 는 해야 한다
         for x in res.get("results", []):
             if x["state"] == "logged_out":
                 logged_out.append(f"{key}/{x['channel']}")
@@ -200,6 +200,16 @@ def check_logins(job, r, profiles: dict) -> list[str]:
                                f"— 이대로 돌리면 이 OTA 는 전부 실패합니다.")
             elif x["state"] == "unknown":
                 job.log("SYS", f"[주의] {key} · {x['channel']} 로그인 상태를 확인하지 못했습니다.")
+
+        # ⚠️ 로그인 확인은 탭을 열고 닫는다. 그 탭이 늦게 닫히면 Chrome 이
+        #    '붙을 수 없는' 상태가 되어, 봇마다 30초 타임아웃을 다 채우고 죽는다.
+        #    (2026-09-30 마감: 09:25 에 '연결됨' 이던 KR 이 09:27 에 안 붙어
+        #     GG KOREA·KKday 가 전멸했다)
+        #    붙기 직전에 한 번 더 본다. 멀쩡하면 1~3초로 끝난다.
+        ok2, why2 = cdp_ready_or_restart(r, key, job.log)
+        if not ok2:
+            job.log("SYS", f"[오류] {key}: 로그인 확인 뒤 Chrome 에 붙지 못했습니다 — {why2}. "
+                           f"그 Chrome 창을 직접 닫고 다시 켠 뒤 실행하세요.")
     if logged_out:
         job.log("SYS", f"[경고] 로그인 필요: {', '.join(logged_out)} "
                        f"— 해당 Chrome 창에서 로그인한 뒤 다시 실행하는 것을 권합니다.")

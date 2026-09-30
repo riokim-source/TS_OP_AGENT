@@ -198,6 +198,30 @@ if c2.hint:
 if c2.n != 1:
     bad.append("결과 수를 잘못 셌다")
 
+# ── VI: 화면이 늦게 떴을 뿐인데 채널이 통째로 죽던 것 ───────────────────
+#
+# 2026-09-27 · 09-30 오픈: '결과가 하나도 없습니다 — open 치명: Date picker
+# input 을 찾지 못했습니다'. 같은 날 마감은 멀쩡했고 상품도 그대로였다.
+# 한 번 보고 없다고 예외를 던졌고, 재시도도 **같은 화면에서** 다시 본 것이다.
+print()
+print("  [VI] 날짜 입력칸 — 기다리고, 다시 불러오고, 무엇이 떴는지 남기는가")
+VI = (ROOT / "OTA Close" / "vi.py").read_text(encoding="utf-8")
+_picker = VI.split("def open_date_picker")[1].split("\ndef ")[0]
+_nav = VI.split("def _vi_navigate_and_pick")[1].split("\ndef ")[0]
+_apply = VI.split("Apply 클릭 최종 실패")[0][-1200:]
+VI_CASES = [
+    ("입력칸을 기다린다", "deadline = time.time()" in _picker),
+    ("못 찾으면 화면을 남긴다", "LOG.error(\"Date picker 못 찾음" in _picker),
+    ("재시도는 페이지부터 다시", "page.goto(AVAILABILITY_URL" in _nav
+     and "for attempt in range(1," in _nav),
+    ("날짜가 다르면 그냥 넘어가지 않는다", "picker 값이 대상 날짜와 다릅니다" in _nav),
+    ("Apply 는 마지막에 상태를 본다", "_dropdown_closed(page)" in _apply),
+]
+for label, ok in VI_CASES:
+    print(f"     {label:30} {'예' if ok else '!! 아니오'}")
+    if not ok:
+        bad.append(f"VI: {label} — 아니다")
+
 print()
 if bad:
     for b in bad:

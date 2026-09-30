@@ -248,7 +248,85 @@ def preflight(job, regions) -> list[str]:
                 job.log("SYS", f"[주의] {region} ({key}) Klook 로그인 상태 확인 불가")
         except Exception as e:
             job.log("SYS", f"[주의] {region} 로그인 확인 실패: {e}")
+
+        # ⚠️ 로그인 확인은 탭을 열고 닫는다. 그 탭이 늦게 닫히면 Chrome 이
+        #    '붙을 수 없는' 상태가 되고, 30초 뒤 worker 가 통째로 실패한다.
+        #    (2026-09-30: 10:30 에 로그인 OK 였던 KR 이 10:30:43 에 안 붙어
+        #     한국 15건이 전부 '결과를 남기지 않음' 으로 날아갔다)
+        #    그래서 **붙기 직전에 한 번 더** 본다. 멀쩡하면 1~3초로 끝난다.
+        ok2, why2 = cdp_ready_or_restart(r, key, job.log)
+        if not ok2:
+            job.log("SYS", f"[오류] {key}: 로그인 확인 뒤 Chrome 에 붙지 못했습니다 — {why2}. "
+                           f"그 Chrome 창을 직접 닫고 다시 켠 뒤 실행하세요.")
+            logged_out.append(region)
     return logged_out
+
+
+# worker 가 Chrome 에 못 붙었을 때 klook_core 가 채우는 메모 (한 벌로 둔다)
+LOST_MEMO = "worker 가 결과를 남기지 않음"
+
+
+def _is_lost(res: dict) -> bool:
+    return LOST_MEMO in str(res.get("memo", ""))
+
+
+def _task_of(res: dict) -> dict:
+    """결과 줄에서 '작업' 만 떼어낸다 (klook_core 의 fallback 줄 = task + result/memo)."""
+    return {k: v for k, v in res.items() if k not in ("result", "memo")}
+
+
+def _drive(job, core, region_tasks, unknown, target_date, on_log, on_result, on_done):
+    """Runner 를 돌리고 끝날 때까지 기다린다 (Runner 는 자체 스레드로 돈다)."""
+    import time as _t
+    runner = core.Runner(region_tasks, unknown, target_date,
+                         on_log=on_log, on_result=on_result, on_done=on_done)
+    job.set_stopper(runner.stop)
+    runner.start()
+    while runner.running:
+        if job.stopping:
+            runner.stop()
+        _t.sleep(0.3)
+
+
+def _retry_lost(job, core, lost: dict, target_date, on_log, report) -> None:
+    """
+    Chrome 에 못 붙어 지역이 통째로 빈 경우 — Chrome 을 다시 켜고 한 번 더.
+
+    ⚠️ 이게 이번 주 실패의 제일 큰 덩어리였다. 2026-09-30 오픈에서 KR(9522) 이
+       worker 붙는 순간에만 막혀 **한국 15건이 전부** 실패로 남았다. 5분 뒤
+       MRT 차례에서 같은 Chrome 을 봇이 다시 켜니 멀쩡했다 — 즉 다시 켜고 한
+       번만 더 하면 살릴 수 있는 실패였다.
+
+       사람이 로그를 보고 다시 돌리는 것과 같은 일을 봇이 그 자리에서 한다.
+    """
+    r = get_routing()
+    retry_tasks: dict[str, list[dict]] = {}
+    for region, rows in lost.items():
+        label = core.REGION_DISPLAY.get(region, region)
+        job.log("SYS", f"[재시도] {label} {len(rows)}건 — worker 가 Chrome 에 붙지 "
+                       f"못했습니다. Chrome 을 다시 켜고 한 번 더 합니다.")
+        key = r.route(region, "KLOOK")
+        if key is None:
+            ok, why = False, "Chrome 연결이 미설정입니다"
+        else:
+            ok, why = cdp_ready_or_restart(r, key, job.log)
+        if not ok:
+            job.log("SYS", f"[재시도] {label} 못 함 — {why}")
+            for res in rows:
+                report(region, res, f" / 재시도 못 함: {why}")
+            continue
+        retry_tasks[region] = [_task_of(res) for res in rows]
+
+    if not retry_tasks:
+        return
+
+    def on_result2(region, res):
+        # 두 번째에도 결과가 비면 klook_core 가 같은 fallback 줄을 만들어 준다.
+        # 그건 이제 그대로 적는다 (더 이상 재시도하지 않는다).
+        tail = " / 재시도에서도 마찬가지였습니다" if _is_lost(res) else " (재시도)"
+        report(region, res, tail)
+
+    _drive(job, core, retry_tasks, [], target_date, on_log, on_result2, lambda s: None)
 
 
 def run(job, plan: list[dict], target_date: str | None) -> None:
@@ -290,11 +368,12 @@ def run(job, plan: list[dict], target_date: str | None) -> None:
     job.log("SYS", f"[KLOOK] {parsed['total']}건 오픈 시작 / 대상 {core.describe_date(target_date)}")
 
     holder: dict = {}
+    lost: dict[str, list[dict]] = {}
 
     def on_log(region, line):
         job.log("KLOOK" if region == "*" else core.REGION_DISPLAY.get(region, region), line)
 
-    def on_result(region, res):
+    def report(region, res, memo_tail: str = ""):
         label = str(res.get("result", "")).strip()
         if str(res.get("workflow", "")).lower() == "activity" and label == "실패":
             label = "새버전 실패"
@@ -303,29 +382,34 @@ def run(job, plan: list[dict], target_date: str | None) -> None:
             "region": core.REGION_DISPLAY.get(region, region),
             "item": core.cli.item_text_of(res),
             "result": label,
-            "memo": str(res.get("memo", "")).strip()[:300],
+            "memo": (str(res.get("memo", "")).strip() + memo_tail).strip()[:300],
         })
+
+    def on_result(region, res):
+        # ⚠️ Chrome 에 못 붙어서 결과가 통째로 빈 것은 **아직 적지 않는다**.
+        #    Chrome 을 다시 켜고 한 번 더 해 본 뒤, 그 결과만 적는다.
+        #    (그대로 적으면 같은 상품이 '실패' 와 '성공' 두 줄로 남는다)
+        if _is_lost(res) and not job.stopping:
+            lost.setdefault(region, []).append(res)
+            return
+        report(region, res)
 
     def on_done(summary):
         holder["summary"] = summary
 
-    runner = core.Runner(parsed["region_tasks"], parsed["unknown"], target_date,
-                         on_log=on_log, on_result=on_result, on_done=on_done)
-    job.set_stopper(runner.stop)
-    runner.start()
+    _drive(job, core, parsed["region_tasks"], parsed["unknown"], target_date,
+           on_log, on_result, on_done)
 
-    # Runner 는 자체 스레드로 돈다. 여기서 끝날 때까지 기다린다.
-    while runner.running:
-        if job.stopping:
-            runner.stop()
-        import time as _t
-        _t.sleep(0.3)
+    if lost and not job.stopping:
+        _retry_lost(job, core, lost, target_date, on_log, report)
 
     s = holder.get("summary") or {}
+    failed = sum(1 for x in list(job.results)
+                 if x.get("channel") == "KLOOK" and "실패" in str(x.get("result", "")))
     job.done(summary={
         "channel": "KLOOK",
         "total": parsed["total"],
         "duration": s.get("duration_text", ""),
-        "failed": s.get("failed", 0),
+        "failed": failed,
         "stopped": s.get("stopped", False),
     })

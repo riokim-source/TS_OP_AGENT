@@ -88,6 +88,38 @@ def unclosed_quote(line: str) -> str:
     return ""
 
 
+# ⚠️ 두 번째 함정: 파이썬이 \n 을 **진짜 줄바꿈으로 바꿔서** 보낸다.
+#
+#    2026-09-30 확인. Klook 의 Adult/Person 줄 찾기 JS 가 이 두 줄 때문에
+#    날마다 SyntaxError 로 죽고 있었다 (그래서 언어별 줄 고르기가 통째로
+#    fallback 으로 흘렀고, Osaka Kobe (Night)(한) 이 lang_not_found 로 실패).
+#
+#        const firstLine = raw.split('\n')[0].trim();     <- 문자열이 끊긴다
+#        // 'Adult\nStatus: ...' 만 있어도 매칭 가능       <- 주석이 끊겨 코드가 된다
+#
+#    r""" 가 아닌 여러 줄 문자열에서 \n 하나는 거의 늘 실수다. JS 에 진짜
+#    줄바꿈 글자를 넣고 싶으면 \\n 으로 적어야 한다.
+LONE_NL = re.compile(r"(?<!\\)\\n")
+
+
+def lone_newline_escape(body: str, raw: bool) -> list[tuple[int, str]]:
+    """JS 조각 안에서 파이썬이 줄바꿈으로 바꿔 버릴 \\n 의 (줄번호, 줄)."""
+    if raw:
+        return []                           # r""" 는 그대로 전달된다
+    out = []
+    for k, line in enumerate(body.split("\n")):
+        if LONE_NL.search(line):
+            out.append((k, line))
+    return out
+
+
+# 검사기 자체 점검 — 위의 진짜 사고 두 줄을 잡아야 한다
+_SELF_BAD = "const firstLine = raw.split('\\n')[0].trim();"
+_SELF_OK = "const firstLine = raw.split('\\\\n')[0].trim();"
+assert lone_newline_escape(_SELF_BAD, raw=False), "검사기가 사고 줄을 못 잡는다"
+assert not lone_newline_escape(_SELF_OK, raw=False), "검사기가 멀쩡한 줄을 잡는다"
+assert not lone_newline_escape(_SELF_BAD, raw=True), "r 문자열은 건드리면 안 된다"
+
 for f in FILES:
     src = f.read_text(encoding="utf-8", errors="replace")
     for m in BLOCK.finditer(src):
@@ -96,6 +128,13 @@ for f in FILES:
             continue
         checked += 1
         start_line = src[:m.start()].count("\n") + 1
+        for k, line in lone_newline_escape(body, raw=bool(m.group("pre"))):
+            where = f"{f.relative_to(ROOT)}:{start_line + k + 1}"
+            print(f"  !! {where}")
+            print(f"       {line.strip()[:90]}")
+            print("       -> 이 \\n 은 파이썬이 진짜 줄바꿈으로 바꿔서 보낸다 "
+                  "(\\\\n 으로 적어야 한다)")
+            bad.append(where)
         for k, line in enumerate(body.split("\n")):
             q = unclosed_quote(line)
             if q:
