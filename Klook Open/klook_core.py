@@ -28,7 +28,33 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # ── main.py 재사용 (파싱 / 로그 / 상수) ──────────────────────────────────────
-import main as cli
+#
+# ⚠️ `import main` 으로 가져오면 안 된다. 이 PC 에는 main.py 가 둘 있다.
+#
+#        Klook Open/main.py     <- 우리가 쓰려는 것 (BASE_DIR, WORKER …)
+#        OTA Close/main.py      <- 마감 봇 진입점
+#
+#    통합 화면은 한 프로세스 안에서 두 폴더를 모두 sys.path 에 올린다. 어느
+#    쪽이 앞에 오는지는 '그날 어느 화면을 먼저 열었나' 로 정해진다. 마감 쪽이
+#    앞서면 여기서 바로 터지고, 화면에는 이렇게만 남는다.
+#
+#        열지 못한 OTA — KLOOK: AttributeError:
+#        module 'main' has no attribute 'BASE_DIR'
+#
+#    (2026-10-01 로컬판 오픈에서 실제로 났다. 상품이나 Chrome 문제가 아니라
+#     이름이 겹친 것뿐인데, 그날 Klook 오픈이 통째로 안 됐다)
+#
+#    그래서 이름으로 찾지 않고 **바로 옆에 있는 파일**을 읽는다. sys.path 가
+#    어떤 순서든 상관없어진다.
+import importlib.util as _importlib_util
+
+_HERE = Path(__file__).resolve().parent
+_spec = _importlib_util.spec_from_file_location("klook_cli", _HERE / "main.py")
+if _spec is None or _spec.loader is None:                  # 있을 수 없는 일이지만
+    raise ImportError(f"Klook Open/main.py 를 찾지 못했습니다: {_HERE}")
+cli = _importlib_util.module_from_spec(_spec)
+sys.modules.setdefault("klook_cli", cli)
+_spec.loader.exec_module(cli)
 from packages import PACKAGES, get_package
 
 BASE_DIR          = cli.BASE_DIR

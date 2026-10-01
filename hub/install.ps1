@@ -87,7 +87,24 @@ foreach ($d in @(@("Klook Open", "packages.py"), @("OTA Close", "kkday.py"))) {
 # ── 5) 중계 열쇠 ─────────────────────────────────────────────────────────
 # 이게 없으면 Agent 가 켜지자마자 꺼진다. 팀원이 가장 많이 걸리는 지점이라
 # 설치할 때 미리 잡아 준다.
+#
+# ⚠️ 로컬판(last minute local)은 중계를 아예 쓰지 않는다. 그런데도 '열쇠가
+#    없습니다' 를 빨간 글씨로 띄우면, 멀쩡히 설치된 사람이 관리자에게
+#    열쇠를 받으러 간다. 묶음 종류를 보고 건너뛴다.
+#    (묶음 종류는 hub/data/pack.json 에 적혀 있다 — make_local.py 가 쓴다)
+$packKind = ""
+$packFile = Join-Path $Root "hub\data\pack.json"
+if (Test-Path $packFile) {
+    try { $packKind = (Get-Content $packFile -Raw | ConvertFrom-Json).kind } catch { $packKind = "" }
+}
+$isLocalPack = ($packKind -eq "local")
+
 Line ""
+if ($isLocalPack) {
+Line "[5/5] 중계 열쇠 - 필요 없음 (이 PC 전용 묶음)"
+Ok "Agent 와 Firebase 없이 이 PC 에서 바로 실행합니다"
+}
+else {
 Line "[5/5] 중계 열쇠"
 $key = Join-Path $Root "hub\\data\\firebase_service_account.json"
 if (Test-Path $key) {
@@ -113,6 +130,7 @@ if (Test-Path $key) {
     Bad "열쇠가 없습니다 -> hub\data\firebase_service_account.json"
     Line "       관리자에게 요청하세요. 사내 공유 폴더나 USB 로만 받습니다."
     Line "       (메신저나 메일로 주고받지 마세요)"
+}
 }
 
 # 다른 PC 에서 복사해 온 경우에만 개인 파일을 정리한다.
@@ -154,6 +172,19 @@ Line ""
 Line ("=" * 70)
 Line " 다음 순서"
 Line ("=" * 70)
+if ($isLocalPack) {
+Line "  1. '라스트미닛 로컬 열기.bat' 을 실행합니다. (검은 창은 닫지 마세요)"
+Line "  2. 브라우저가 열리면 왼쪽 [크롬 연결] 에서 프로필을 하나씩 '실행' 합니다."
+Line "  3. 열린 Chrome 창에서 각 OTA 에 로그인합니다."
+Line "       KR/JP/AU  ... Klook, KKday, GetYourGuide, Trip.com"
+Line "       GLOBAL     ... Viator, MyRealTrip"
+Line "  4. [전체 확인] 버튼으로 전부 '로그인됨' 인지 봅니다."
+Line ""
+Line "  로그인은 각 Chrome 프로필에 저장되어 다음부터는 다시 안 해도 됩니다."
+Line "  매일 아침 할 일은 '라스트미닛 로컬 열기.bat' 하나뿐입니다."
+Line ("=" * 70)
+exit 0
+}
 Line "  1. 'Agent 켜기.bat' 을 실행합니다. (검은 창은 닫지 마세요)"
 Line "  2. 화면 주소를 열고 [Chrome 로그인] 에서 프로필을 하나씩 '실행' 합니다."
 Line "  3. 열린 Chrome 창에서 각 OTA 에 로그인합니다."

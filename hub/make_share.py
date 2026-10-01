@@ -187,8 +187,11 @@ def write_readme(dest: Path, with_key: bool) -> None:
             "  관리자에게 따로 받아 그 경로에 넣으세요.",
             "",
         ]
-    (dest / "먼저 읽어보세요.txt").write_text(
-        "\n".join(lines).replace("\n", "\r\n"), encoding="utf-8")
+    # ⚠️ 바이트로 쓴다. write_text 는 Windows 에서 "\n" 을 다시 "\r\n" 으로
+    #    바꾸므로, 이미 CRLF 로 만든 글이 CR CR LF 가 되어 메모장에서 한 줄씩
+    #    비어 보인다. ([[windows-bat-crlf]])
+    (dest / "먼저 읽어보세요.txt").write_bytes(
+        "\n".join(lines).replace("\n", "\r\n").encode("utf-8"))
 
 
 KEEP = {".git", ".gitignore"}          # 저장소로 쓸 때 지우면 안 되는 것

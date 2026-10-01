@@ -7,7 +7,8 @@ import time
 import streamlit as st
 
 import dispatch
-from common import CHANNEL_LABEL, date_picker, render_logs, render_results
+from common import (CHANNEL_LABEL, chrome_page_name, date_picker,
+                    render_logs, render_results)
 from core import kkday_codes
 from core.close import runner as close_runner
 from core.routing import get_routing
@@ -104,8 +105,9 @@ def render(lock) -> None:
                 f"{u['region']}/{CHANNEL_LABEL.get(u['channel'], u['channel'])}"
                 for u in req["unconfigured"]))
         if not ready_all and req["profiles"]:
-            st.warning("꺼져 있거나 충돌 중인 Chrome 이 있습니다. "
-                       "[Chrome / 로그인] 에서 실행하고 로그인을 확인하세요.", icon="⚠️")
+            st.warning(f"꺼져 있거나 충돌 중인 Chrome 이 있습니다. "
+                       f"[{chrome_page_name()}] 에서 실행하고 로그인을 확인하세요.",
+                       icon="⚠️")
 
     st.divider()
 

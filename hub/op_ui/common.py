@@ -230,6 +230,16 @@ def who_input(key: str = "who_in") -> str:
     return ""
 
 
+def chrome_page_name() -> str:
+    """
+    'Chrome 을 켜는 화면' 의 이름. 껍데기마다 다르다.
+
+    중앙판은 [Chrome / 로그인], 로컬판(last minute local)은 [크롬 연결] 이다.
+    안내문에 한쪽 이름만 박아 두면, 다른 쪽 사람은 없는 탭을 찾게 된다.
+    """
+    return "크롬 연결" if os.environ.get("LMHUB_SHELL") == "local" else "Chrome / 로그인"
+
+
 def page(title: str, icon: str = "") -> None:
     st.set_page_config(page_title=f"{title} · TOURSTORY OP", page_icon=icon or "🧭",
                        layout="wide")
