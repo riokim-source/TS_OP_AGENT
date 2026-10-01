@@ -50,6 +50,13 @@ AREA_ORDER: list[str] = [a for _g, areas in REGION_GROUPS for a in areas]
 KOREA_AREAS: frozenset[str] = frozenset(
     next(areas for name, areas in REGION_GROUPS if name == "Korea"))
 
+# 일본 Area. '일본 상품' 규칙(TPC 언어, GG 중국어 조건)이 이걸 본다.
+# ⚠️ core.routing.area_region() 을 쓰지 않는다. 그쪽은 'JAPAN' 처럼 대문자
+#    표기라 비교가 어긋나기 쉽고(2026-10-01 에 실제로 어긋났다), 수집 규칙은
+#    Chrome 라우팅을 몰라도 돌아야 한다 (수집 전용으로 떼어 쓸 수 있게).
+JAPAN_AREAS: frozenset[str] = frozenset(
+    next(areas for name, areas in REGION_GROUPS if name == "Japan"))
+
 # CP / MRT 를 별도 규칙으로 태우는 지역 = Japan 전체
 #   Office: 1명만 있어도 CP·MRT 전량 / OP: 10~19 MRT만, 20+ 반반
 #
@@ -100,6 +107,18 @@ OPTION_SPLIT_TOURS: list[str] = [
     "에덴",
     "지산",
 ]
+
+# 화면에서 아예 안 보여 줄 언어
+#
+# ⚠️ 일본어는 뺀다 (2026-10-01 운영 요청).
+#      - 일본 상품은 어차피 일본어 가이드라 '일본어 표시' 가 뜻이 없다
+#      - 한국 상품에서도 일본어로는 팔지 않는다
+#    Klook 에도 '(일)' 상품은 **하나도 없다**(packages.py 확인). 그래서 목록에서
+#    빼도 열 수 있는 상품을 잃지 않는다.
+#
+# ⚠️ 여기에 넣은 언어는 '제외할 언어' 후보에서도 사라진다. 즉 그 언어 때문에
+#    제한이 걸리는 일 자체가 없어진다 (language_restricted 의 분모에서 빠진다).
+HIDDEN_LANGUAGES: frozenset[str] = frozenset({"japanese"})
 
 # 언어 표기 (메모용)
 LANG_KO: dict[str, str] = {

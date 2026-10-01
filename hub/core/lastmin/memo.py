@@ -74,15 +74,21 @@ def available_languages(base: str, sheet_languages: list[str]) -> list[str]:
     언어는 종류가 정해져 있으므로 넷을 항상 보여준다. 시트나 Klook 에서
     그 밖의 값이 나오면 뒤에 덧붙인다.
 
-    후보를 늘려도 기본값은 '전부 선택' 이라 제한이 걸리지 않는다
-    (language_restricted() 는 일부만 골랐을 때만 참). 사람이 빼야 제한이 된다.
+    후보를 늘려도 기본값은 '전부 포함' 이라 제한이 걸리지 않는다
+    (language_restricted() 는 일부만 남겼을 때만 참). 사람이 빼야 제한이 된다.
+
+    ⚠️ C.HIDDEN_LANGUAGES 에 적힌 언어(일본어)는 후보에서 뺀다. 예약 파일에
+       그 언어로 들어온 줄이 있어도 마찬가지다 — 화면에 띄워 봐야 고를 일이
+       없고, 후보가 하나 늘면 '전부 포함' 의 기준만 흔들린다.
     """
-    order = ["english", "korean", "chinese", "japanese"]
+    order = [l for l in ["english", "korean", "chinese", "japanese"]
+             if l not in C.HIDDEN_LANGUAGES]
     got: set[str] = set()
     for raw in sheet_languages:
         got.update(_split_langs(raw))
     got.update(klook_language_variants(base).keys())
-    extra = sorted(x for x in got if x not in order)
+    extra = sorted(x for x in got
+                   if x not in order and x not in C.HIDDEN_LANGUAGES)
     return list(order) + extra
 
 
@@ -327,6 +333,24 @@ def klook_memo_names(base: str, r: RowInput) -> list[str]:
     return names or [base]
 
 
+def gg_lang_ok(r: RowInput) -> bool:
+    """
+    그날 GG 를 열 수 있는가. (일본 상품 + '중국어 불가' 면 못 연다)
+
+    ⚠️ 일본 상품의 GG 쪽 손님은 중국어 가이드로 받는다. 그래서 그날 중국어를
+       빼면 GG 에는 열 것이 없다. 수량이 임계값을 넘어도 GG 줄에서 뺀다
+       (2026-10-01 운영 요청). TPC 가 '한국 상품=중국어 / 일본 상품=한국어'
+       로 막히는 것과 같은 성격의 규칙이다.
+
+    제한을 안 걸었으면 중국어도 되는 날이다 — 그대로 연다.
+    """
+    if r.area not in C.JAPAN_AREAS:
+        return True
+    if not r.language_restricted():
+        return True
+    return "chinese" in r.selected_languages()
+
+
 def apply_channel_moves(dist: dict, r: RowInput) -> dict:
     """
     자동 배분 결과에 '픽업 제한' 과 '운영자 수동 변경' 을 차례로 반영한다.
@@ -342,6 +366,14 @@ def apply_channel_moves(dist: dict, r: RowInput) -> dict:
     for src, dst in r.channel_moves.items():
         if src in dist and src != dst:
             dist = calc.move_channel(dist, src, dst)
+    # 3) 열 수 없는 GG 는 마지막에 뺀다.
+    #
+    #    ⚠️ 맨 마지막인 이유: 1·2 에서 다른 채널 몫이 GG 로 넘어올 수 있다.
+    #       먼저 비우면 그 뒤에 넘어온 몫이 그대로 남아 '못 여는 GG' 에 적힌다.
+    #    ⚠️ 뺀 수량은 다른 채널로 옮기지 않는다. 옮기면 그 상품이 받을 수 있는
+    #       자리 수가 사람 모르게 늘어난다. TPC 와 같은 방식이다 (적지 않는다).
+    if dist.get("GG") and not gg_lang_ok(r):
+        dist = {ch: ([] if ch == "GG" else list(v)) for ch, v in dist.items()}
     return dist
 
 
@@ -415,6 +447,21 @@ def _fmt(name: str, qty: int | None, note: str) -> str:
     return body + (f" ({note})" if note else "")
 
 
+def _is_zero(qty) -> bool:
+    """
+    '0 자리' 인가. 수량이 0 인 줄은 OP 텍스트에 적지 않는다 (2026-10-01 요청).
+
+    ⚠️ 이름만 적는 줄(KK·VI 의 '판매 재개')은 수량이 None 이다. 그건 0 이 아니다 —
+       여기서 걸러 버리면 재개 지시가 통째로 사라진다.
+
+    0 은 어디서 생기나: Klook 언어 변형으로 수량을 나눌 때다.
+        1 을 (한)/(중) 둘로 나누면 1, 0 이 된다.
+    그 '0' 을 그대로 적으면 사람이 0 을 넣으러 들어갔다가 **열려 있던 자리를
+    닫아** 버린다. 적지 않는 쪽이 맞다.
+    """
+    return qty is not None and int(qty) == 0
+
+
 def build_panel_memo(rows: list[RowInput], is_latest: bool, is_op: bool) -> dict[str, list[str]]:
     """
     한 투어일자 패널 -> {채널: [출력문자열...]}
@@ -447,6 +494,8 @@ def build_panel_memo(rows: list[RowInput], is_latest: bool, is_op: bool) -> dict
                         tg, fb = klook_targets(base, r, qty)
                         kn = _klook_note(r, note_nolang, fb)
                         for nm, q in tg:
+                            if _is_zero(q):
+                                continue      # 수량 0 은 적지 않는다 (_is_zero)
                             # 언어는 보통 상품명에 이미 들어가 있다. '(중국어 불가)' 를 또
                             # 붙이면 같은 투어가 두 번 적힌 것처럼 보여서 읽기만 나빠진다.
                             auto[ch].append(_fmt(nm, q, kn))
@@ -479,6 +528,8 @@ def build_panel_memo(rows: list[RowInput], is_latest: bool, is_op: bool) -> dict
                     tg, fb = klook_targets(base, r, q)
                     kn = _klook_note(r, note_nolang, fb)
                     for nm, qq in tg:
+                        if _is_zero(qq):
+                            continue          # 0 자리는 적지 않는다
                         manual[ch].append(_fmt(nm, qq, kn))
                 elif ch == "TPC":
                     # 사람이 직접 적어 넣은 수량은 조건으로 지우지 않는다.
@@ -489,6 +540,48 @@ def build_panel_memo(rows: list[RowInput], is_latest: bool, is_op: bool) -> dict
                     manual[ch].append(_fmt(base, q, note))
 
     return {ch: auto[ch] + manual[ch] for ch in C.CHANNELS}
+
+
+def rows_from_panel(panel: dict, values: dict, with_moves: bool = True) -> list:
+    """
+    패널(화면 트리 한 장) + 입력값 -> RowInput 목록.
+
+    values: {줄 key: {"qty": 수량,
+                      "lang": [남길 언어], "pick": [남길 픽업지],
+                      "ch": {채널: 수량}, "move": {채널: 채널}}}
+            그 줄의 값이 없으면 '수량 0 · 제한 없음' 으로 본다.
+
+    ⚠️ lang/pick 은 **남길 목록**이다. 화면은 '제외할 것' 을 받아 뒤집어서 넣는다
+       (2026-10-01 부터). 빈 목록은 '전부 뺐다', 키가 없으면 '제한 없음' 이다.
+
+    ⚠️ 이 변환을 화면마다 새로 쓰면 안 된다. 언어·픽업을 어떻게 읽느냐가
+       곧 수량 배분이라, 한 글자만 달라도 다른 수량이 나간다. 다른 앱에
+       수집 기능만 떼어 붙일 때도 이 함수를 쓴다.
+    """
+    out: list[RowInput] = []
+    for g in panel.get("groups") or []:
+        for a in g.get("areas") or []:
+            for row in a.get("rows") or []:
+                v = dict((values or {}).get(row.get("key")) or {})
+                langs_all = list(row.get("languages") or [])
+                picks_all = list(row.get("pickups") or [])
+                opts_all = list(row.get("options") or [])
+                out.append(RowInput(
+                    area=a.get("area", ""), product=row.get("product", ""),
+                    option=row.get("option") or "",
+                    option_split=bool(row.get("option_split")),
+                    qty=int(v.get("qty") or 0),
+                    languages_all=langs_all,
+                    languages_sel=list(v["lang"]) if "lang" in v else list(langs_all),
+                    pickups_all=picks_all,
+                    pickups_sel=list(v["pick"]) if "pick" in v else list(picks_all),
+                    options_all=opts_all,
+                    options_sel=list(v["opt"]) if "opt" in v else list(opts_all),
+                    channel_qty={k: int(q or 0) for k, q in (v.get("ch") or {}).items()},
+                    channel_flag={k: bool(x) for k, x in (v.get("flag") or {}).items()},
+                    channel_moves=dict(v.get("move") or {}) if with_moves else {},
+                ))
+    return out
 
 
 def render_memo(panels: list[dict], is_op: bool) -> str:
@@ -553,6 +646,11 @@ def build_open_plan(rows: list[RowInput], is_op: bool) -> list[dict]:
                     name, qty, mode = e.strip(), 0, "resume"
 
                 for target, tqty in _resolve_targets(ch, name, r, qty):
+                    # ⚠️ 수량 0 은 '오픈' 이 아니라 '마감' 이다. 언어로 나누다
+                    #    생긴 0 자리를 그대로 보내면 열려 있던 재고를 닫는다.
+                    #    (메모에서도 같은 이유로 뺀다 — _is_zero)
+                    if mode == "qty" and _is_zero(tqty):
+                        continue
                     plan.append({
                         "channel": ch,
                         "area": r.area,

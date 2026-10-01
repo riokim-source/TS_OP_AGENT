@@ -20,7 +20,8 @@ from core import paths
 from core import pickups as lmpickups
 from core.lastmin import constants as C
 from core.lastmin import entries as lmentries
-from core.lastmin.memo import RowInput, build_open_plan, render_memo
+from core.lastmin.memo import (RowInput, build_open_plan, render_memo,
+                               rows_from_panel)
 from core.lastmin.panels import build_panels
 from core.lastmin import quickfill
 from core.opens import IMPLEMENTED, NOT_IMPLEMENTED_REASON, summarize_plan
@@ -68,7 +69,8 @@ def _load(raw: bytes, filename: str, pick_dates=None) -> bool:
     #    되살린 수량이 화면에 안 나오고 이전 값이 그대로 보인다.
     #    파일을 새로 읽을 때는 위젯 상태를 비워서 되살린 값으로 다시 그리게 한다.
     for wk in [w for w in list(st.session_state)
-               if str(w).startswith(("q-", "l-", "p-", "c-", "mv-", "qf-"))]:
+               if str(w).startswith(("q-", "l-", "p-", "lx-", "px-",
+                                     "c-", "mv-", "qf-"))]:
         del st.session_state[wk]
     # 빠른 입력 칸에 적어 둔 글도 파일과 함께 비운다 (다른 날 글이 남으면 헷갈린다)
     st.session_state["lm_qf"] = {}
@@ -79,26 +81,25 @@ def _load(raw: bytes, filename: str, pick_dates=None) -> bool:
 
 
 def _rows_for(pi: int, with_moves: bool = True) -> list:
+    """
+    화면 입력 -> RowInput 목록.
+
+    ⚠️ 변환은 core.lastmin.memo.rows_from_panel 한 곳에만 둔다. 여기서 다시
+       쓰면 '언어·픽업을 어떻게 읽느냐' 가 두 벌이 되고, 그건 곧 수량이
+       갈리는 자리다. 여기서는 session_state 의 값을 모아 주기만 한다.
+    """
     p = (st.session_state.get("lm_panels") or [])[pi]
-    out = []
+    values = {}
     for g in p["groups"]:
         for a in g["areas"]:
             for row in a["rows"]:
                 e = _entry(pi, row)
-                out.append(RowInput(
-                    area=a["area"], product=row["product"], option=row.get("option") or "",
-                    option_split=bool(row.get("option_split")), qty=int(e["qty"] or 0),
-                    languages_all=list(row.get("languages") or []),
-                    languages_sel=list(e["lang"]),
-                    pickups_all=list(row.get("pickups") or []),
-                    pickups_sel=list(e["pick"]),
-                    options_all=list(row.get("options") or []),
-                    options_sel=list(row.get("options") or []),
-                    channel_qty={k: int(v or 0) for k, v in (e["ch"] or {}).items()},
-                    channel_flag={},
-                    channel_moves=dict(e["move"] or {}) if with_moves else {},
-                ))
-    return out
+                values[row["key"]] = {
+                    "qty": int(e["qty"] or 0),
+                    "lang": list(e["lang"]), "pick": list(e["pick"]),
+                    "ch": dict(e["ch"] or {}), "move": dict(e["move"] or {}),
+                }
+    return rows_from_panel(p, values, with_moves=with_moves)
 
 
 def _panels_payload() -> list:
@@ -271,7 +272,8 @@ def render(lock) -> None:
             st.session_state["lm_entries"] = {}
             st.session_state["lm_restored"] = 0
             for k in [k for k in st.session_state
-                      if k.startswith(("q-", "l-", "p-", "c-", "ms-", "md-"))]:
+                      if k.startswith(("q-", "l-", "p-", "lx-", "px-",
+                                      "c-", "ms-", "md-"))]:
                 del st.session_state[k]
             st.rerun()
 
@@ -291,12 +293,14 @@ def render(lock) -> None:
             if not p["is_latest"]:
                 st.caption("전날 10시 이후 들어온 예약을 자동 집계한 값입니다. 그대로 두면 됩니다.")
             for g in p["groups"]:
-                if p["is_latest"] and g.get("region") == OUTSOURCED_GROUP:
-                    continue      # 맨 위에 이미 그렸다 (위젯 키가 겹친다)
                 st.markdown(f"**{g['region']}**")
                 for a in g["areas"]:
                     st.caption(a["area"])
                     for row in a["rows"]:
+                        # 아웃소싱 줄은 맨 위에 이미 그렸다. 또 그리면 위젯 키가
+                        # 겹쳐서 화면이 통째로 죽는다 (DuplicateWidgetID).
+                        if p["is_latest"] and row.get("outsourced"):
+                            continue
                         _tour_row(pi, row, p["is_latest"])
 
     lmentries.save(L, st.session_state.get("lm_entries") or {}, who())
@@ -341,30 +345,37 @@ def _apply_quick(pi: int, rows: list, text: str) -> tuple[int, list[str]]:
         e.setdefault("ch", dict(row.get("lastmin") or {}))
         e.setdefault("move", {})
         st.session_state[f"q-{k}"] = qty
+        # 화면 칸은 '제외할 것' 을 받는다. 남길 목록의 반대를 넣어 준다.
         if langs_all:
-            st.session_state[f"l-{k}"] = list(lang)
+            st.session_state[f"lx-{k}"] = [x for x in langs_all if x not in lang]
         if picks_all:
-            st.session_state[f"p-{k}"] = list(pick)
+            st.session_state[f"px-{k}"] = [x for x in picks_all if x not in pick]
     return len(assign), problems
 
 
 OUTSOURCED_GROUP = "아웃소싱"
 
 
+def _outsourced_rows(panel: dict) -> list:
+    """표시가 붙은 줄 (core.lastmin.outsourced.mark 가 단다)."""
+    return [(a["area"], r) for g in panel["groups"]
+            for a in g["areas"] for r in a["rows"] if r.get("outsourced")]
+
+
 def _outsourced_block(pi: int, panel: dict) -> None:
     """
-    예약 파일에 안 나오는 상품 (아웃소싱). 화면 맨 위에 둔다.
+    아웃소싱 상품 (MBC 스튜디오 …). 화면 맨 위에 둔다.
 
     ⚠️ 여기는 **빠른 입력 대상이 아니다.** 예전처럼 수량·언어·픽업을 직접
-       고른다 (2026-09-27 요청). 예약이 없어 줄이 안 생기던 상품이라
-       빠른 입력 칸에 적으면 '이 지역 목록에 없는 이름' 으로만 나왔다.
+       고른다 (2026-09-27 요청).
+
+    ⚠️ 2026-10-01 부터 **익일 예약에 그 상품이 있을 때만** 보인다. 없는 날은
+       이 칸 자체가 안 뜬다 — 넣을 것이 없는 자리를 매일 보게 하지 않는다.
     """
-    rows = [(a["area"], r) for g in panel["groups"]
-            if g.get("region") == OUTSOURCED_GROUP
-            for a in g["areas"] for r in a["rows"]]
+    rows = _outsourced_rows(panel)
     if not rows:
         return
-    st.markdown(f"**{OUTSOURCED_GROUP}** — 예약에 안 잡히는 상품입니다. "
+    st.markdown(f"**{OUTSOURCED_GROUP}** — 내일 예약에 있는 아웃소싱 상품입니다. "
                 "여기는 직접 넣으세요.")
     for area, row in rows:
         st.caption(area)
@@ -383,13 +394,16 @@ def _quick_fill(pi: int, panel: dict) -> None:
     notes = st.session_state.setdefault("lm_qf_note", {})
 
     for g in panel["groups"]:
-        if g.get("region") == OUTSOURCED_GROUP:
-            continue              # 아웃소싱은 위에서 예전 방식으로 받는다
         for a in g["areas"]:
             area = a["area"]
+            # 아웃소싱 줄은 위에서 예전 방식으로 받는다. 여기서 세지도, 지우지도
+            # 않는다 ('적지 않은 상품은 0' 규칙에 걸려 조용히 0 이 되면 안 된다).
+            qrows = [r for r in a["rows"] if not r.get("outsourced")]
+            if not qrows:
+                continue
             c1, c2 = st.columns([1, 6])
             c1.write(f"**{area}**")
-            c1.caption(f"{len(a['rows'])}개 상품")
+            c1.caption(f"{len(qrows)}개 상품")
             text = c2.text_area(
                 area, key=f"qf-{pi}-{area}", height=68, label_visibility="collapsed",
                 placeholder=f"{area} 상품 수량 (예: 경주 4, 교촌경주 10)")
@@ -398,7 +412,7 @@ def _quick_fill(pi: int, panel: dict) -> None:
                 applied[area] = text
             elif text != applied[area]:
                 applied[area] = text
-                n, probs = _apply_quick(pi, a["rows"], text)
+                n, probs = _apply_quick(pi, qrows, text)
                 notes[area] = {"n": n, "probs": probs}
             note = notes.get(area) or {}
             if note.get("n"):
@@ -434,28 +448,36 @@ def _tour_row(pi: int, row: dict, is_latest: bool) -> None:
         #       그 파일을 다시 불러오는 순간 Last Minute 탭이 통째로 죽었다
         #       (StreamlitAPIException: default value is not part of the options).
         #       지우지 않고 후보에 얹는다 — 사람이 보고 직접 빼면 된다.
+        # ⚠️ 2026-10-01 부터 **'제외할 것' 만 고른다.**
+        #    예전에는 후보 전부가 선택된 채로 떠 있었다. 그러면 화면이 칩으로
+        #    가득 차서, 한 줄에 무엇이 걸려 있는지(=제한이 있는지) 눈에 안 들어온다.
+        #    기본값은 '전부 포함' 이고, 빼야 할 것만 적는다 — 적힌 것이 곧 지시다.
+        #    속으로 들고 있는 값(e["lang"]/e["pick"])은 예전과 같은 '남긴 목록'
+        #    이다. 메모·오픈 규칙을 건드리지 않기 위해서다.
         langs = _with_saved(row.get("languages") or [], e["lang"])
         if langs:
-            e["lang"] = c[2].multiselect(
-                "언어", langs, key=f"l-{k}",
+            ex = c[2].multiselect(
+                "제외할 언어", langs, key=f"lx-{k}",
                 format_func=lambda x: LANG_LABEL.get(x, x),
-                label_visibility="collapsed", placeholder="언어",
+                label_visibility="collapsed", placeholder="제외할 언어",
                 accept_new_options=True,
-                **({} if f"l-{k}" in st.session_state
-                   else {"default": [x for x in e["lang"] if x in langs]}))
+                **({} if f"lx-{k}" in st.session_state
+                   else {"default": [x for x in langs if x not in e["lang"]]}))
+            e["lang"] = [x for x in langs if x not in ex]
         picks = _with_saved(row.get("pickups") or [], e["pick"])
         known = set(row.get("pickups_known") or [])
         if picks:
-            e["pick"] = c[3].multiselect(
-                "픽업", picks, key=f"p-{k}",
-                **({} if f"p-{k}" in st.session_state
-                   else {"default": [x for x in e["pick"] if x in picks]}),
+            ex = c[3].multiselect(
+                "제외할 픽업지", picks, key=f"px-{k}",
+                **({} if f"px-{k}" in st.session_state
+                   else {"default": [x for x in picks if x not in e["pick"]]}),
                 # GG 에서 확인된 것과 '같은 지역이라 아마 있을 것' 을 구분한다.
                 # 없는 픽업지를 골라도 수량이 사라지진 않는다 — gg_open 은
                 # 화면에서 실제로 찾은 옵션 개수로 나눈다.
                 format_func=lambda x: x if (not known or x in known) else f"{x} ?",
-                label_visibility="collapsed", placeholder="픽업지",
+                label_visibility="collapsed", placeholder="제외할 픽업지",
                 accept_new_options=True)
+            e["pick"] = [x for x in picks if x not in ex]
     else:
         cols = st.columns([4] + [1] * len(C.CHANNELS))
         cols[0].write(label)

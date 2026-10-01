@@ -7,7 +7,7 @@
   1) 적은 상품에 수량·언어·픽업이 들어간다
   2) **적지 않은 상품은 0 으로 되돌아간다**
      (칸을 고쳐 적었는데 지운 상품의 예전 수량이 남으면 그대로 열린다)
-  3) 위젯 키(q-/l-/p-)까지 바뀐다
+  3) 위젯 키(q-/lx-/px-)까지 바뀐다
      세션에 위젯 값이 남아 있으면 Streamlit 이 그쪽을 우선해서, 값은 바뀌었는데
      화면에는 예전 숫자가 보인다. 그 상태로 오픈하면 화면과 다른 수량이 나간다.
   4) 상세 박스는 접힌 채로 시작한다 (2026-09-27 요청)
@@ -79,18 +79,26 @@ for prod, want in (("경주", 4), ("교촌경주", 0), ("알남아", 9)):
 
 print()
 print("  [2] 픽업 제외")
+# ⚠️ 2026-10-01 부터 화면 칸은 '제외할 것' 을 받는다 (px-/lx-).
+#    속으로 들고 있는 값(e["pick"])은 예전과 같은 '남긴 목록' 이다.
 k = T._key(0, ROWS[2])
-pick = st.session_state.get(f"p-{k}")
-print(f"     알남아 픽업 = {pick}")
-if not pick or any("홍대" in x for x in pick):
-    bad.append(f"홍대를 못 뺐다: {pick}")
-if len(pick or []) != len(PICKS) - 1:
-    bad.append(f"홍대 말고 다른 것까지 뺐다: {pick}")
+ex = st.session_state.get(f"px-{k}")
+kept = (ent.get(k) or {}).get("pick")
+print(f"     알남아 제외칸 = {ex} / 남긴 것 = {kept}")
+if not ex or not all("홍대" in x for x in ex):
+    bad.append(f"제외칸에 홍대가 안 들어갔다: {ex}")
+if len(ex or []) != 1:
+    bad.append(f"홍대 말고 다른 것까지 제외했다: {ex}")
+if not kept or any("홍대" in x for x in kept) or len(kept) != len(PICKS) - 1:
+    bad.append(f"남긴 목록이 이상하다: {kept}")
 
-# 언어는 손대지 않았으니 후보 전부여야 한다
-lang = st.session_state.get(f"l-{k}")
-if lang != LANGS:
-    bad.append(f"언어를 안 적었는데 {lang} 로 좁혀졌다")
+# 언어는 손대지 않았으니 '제외 없음' 이어야 한다
+lang_ex = st.session_state.get(f"lx-{k}")
+lang_keep = (ent.get(k) or {}).get("lang")
+if lang_ex:
+    bad.append(f"언어를 안 적었는데 {lang_ex} 가 제외됐다")
+if lang_keep != LANGS:
+    bad.append(f"언어를 안 적었는데 {lang_keep} 로 좁혀졌다")
 
 print()
 print("  [3] 다시 적으면 이전 것이 남지 않는다")
@@ -109,7 +117,9 @@ for label, cond in (
         ("상세 박스는 접힌 채로", "expanded=False" in SRC),
         ("펼친 채로 시작하지 않는다", 'expanded=p["is_latest"]' not in SRC),
         ("지역마다 칸 하나", 'key=f"qf-{pi}-{area}"' in SRC),
-        ("파일을 새로 읽으면 칸도 비운다", '"qf-"' in SRC)):
+        ("파일을 새로 읽으면 칸도 비운다", '"qf-"' in SRC),
+        ("제외칸으로 받는다", '"제외할 언어"' in SRC and '"제외할 픽업지"' in SRC),
+        ("아웃소싱은 빠른 입력에서 뺀다", 'r.get("outsourced")' in SRC)):
     print(f"     {label:24} {'예' if cond else '!! 아니오'}")
     if not cond:
         bad.append(f"{label} — 아니다")
